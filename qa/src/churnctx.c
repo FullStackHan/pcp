@@ -100,7 +100,7 @@ main(int argc, char **argv)
     int		fetch_samples = 1;
     char	*endnum;
     pmResult	*rp;
-    char	*highwater = NULL;
+    unsigned long	highwater = 0;
     char	*q;
     struct timeval delta = { 15, 0 };
     struct timeval startTime;
@@ -108,6 +108,9 @@ main(int argc, char **argv)
     struct timeval appStart;
     struct timeval appEnd;
     struct timeval appOffset;
+#ifdef IS_MINGW
+    MEMORYSTATUSEX	winmemstats;
+#endif
 
     /* trim cmd name of leading directory components */
     pmSetProgname(argv[0]);
@@ -405,8 +408,8 @@ Options:\n\
 
     iter = 1;
     while (samples == -1 || samples-- > 0) {
-	int	new_ctx;
-	char	*check;
+	int		new_ctx;
+	unsigned long	check;
 
 	if (iter == 1 || (iter % fetch_samples) == 0) {
 	    if (dupctx) {
@@ -439,9 +442,15 @@ Options:\n\
 	__pmFindPDUBuf(-1);
 
 	/* check for outrageous memory leaks */
-	check = (char *)sbrk(0);
-	if (highwater != NULL) {
-	    if (check - highwater > 512*1024) {
+	__pmProcessDataSize(&check);
+	if (highwater != 0) {
+	    /*
+	     * check and highwater are signed, values from
+	     * __pmProcessDataSize() are not monotonic increasing, so
+	     * need to check that it has gone up and gone up by more than
+	     * 512K
+	     */
+	    if (check > highwater && check - highwater > 512*1024) {
 		/* use first 2 iterations to get stable */
 		if (iter > 2)
 		    printf("Memory growth (iteration %d): %ld\n", iter, (long)(check - highwater));

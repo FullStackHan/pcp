@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018 Red Hat.
+ * Copyright (c) 2017-2019 Red Hat.
  * Copyright (c) 2009-2011, Salvatore Sanfilippo <antirez at gmail dot com>
  * Copyright (c) 2009-2014, Pieter Noordhuis <pcnoordhuis at gmail dot com>
  *
@@ -53,21 +53,29 @@
 #define REDIS_ERR_OTHER		2 /* Everything else... */
 
 /*
+ * Several exact server error strings for fine-tuning behaviour.
+ */
+#define REDIS_ENOSCRIPT		"NOSCRIPT No matching script. Please use EVAL."
+#define REDIS_ENOCLUSTER	"ERR This instance has cluster support disabled"
+#define REDIS_ESTREAMXADD	"ERR The ID specified in XADD is equal or smaller than the target stream top item"
+
+/*
  * Redis protocol reply types
  */
-#define REDIS_REPLY_STRING	1
-#define REDIS_REPLY_ARRAY	2
-#define REDIS_REPLY_INTEGER	3
-#define REDIS_REPLY_NIL		4
-#define REDIS_REPLY_STATUS	5
-#define REDIS_REPLY_ERROR	6
-
-extern const char *redis_reply(int);
+typedef enum redisReplyType {
+    REDIS_REPLY_STRING		= 1,
+    REDIS_REPLY_ARRAY		= 2,
+    REDIS_REPLY_INTEGER		= 3,
+    REDIS_REPLY_NIL		= 4,
+    REDIS_REPLY_STATUS		= 5,
+    REDIS_REPLY_ERROR		= 6,
+    REDIS_REPLY_UNKNOWN		= -1
+} redisReplyType;
 
 #define REDIS_READER_MAX_BUF (1024*16)  /* Default max unused reader buffer. */
 
 typedef struct redisReadTask {
-    int			type;
+    enum redisReplyType	type;      /* REDIS_REPLY_* type of this task */
     int			elements;  /* number of elements in multibulk container */
     int			idx;       /* index in parent (array) object */
     void		*obj;      /* holds user-generated value for a read task */
@@ -146,11 +154,11 @@ int redisReaderGetReply(redisReader *r, void **reply);
  * SO_REUSEADDR is being used. */
 #define REDIS_CONNECT_RETRIES  10
 
-#define __redis_strerror_r(errno, buf, len) pmErrStr_r(-(errno), buf, len)
+#define __redis_strerror_r(errno, buf, len) pmErrStr_r(-(errno), (buf), (len))
 
 /* This is the reply object returned by redisCommand() */
 typedef struct redisReply {
-    int			type;       /* one of the REDIS_REPLY_* macros */
+    enum redisReplyType	type;       /* REDIS_REPLY_* type of this response */
     long long		integer;    /* value for type REDIS_REPLY_INTEGER */
     size_t		len;        /* length of string */
     char		*str;       /* used for both REDIS_REPLY_{ERROR,STRING} */
@@ -161,6 +169,8 @@ typedef struct redisReply {
 extern redisReader *redisReaderCreate(void);
 
 extern void freeReplyObject(void *);
+
+extern const char *redis_reply_type(redisReply *);
 
 enum redisConnectionType {
     REDIS_CONN_TCP,
@@ -213,7 +223,6 @@ extern redisContext *redisConnectUnixNonBlock(const char *);
 extern int redisReconnect(redisContext *);
 
 extern int redisSetTimeout(redisContext *, const struct timeval);
-extern int redisEnableKeepAlive(redisContext *);
 extern void redisFree(redisContext *);
 extern int redisBufferRead(redisContext *);
 extern int redisBufferWrite(redisContext *, int *);
@@ -227,16 +236,13 @@ extern int redisBufferWrite(redisContext *, int *);
 extern int redisGetReply(redisContext *, void **);
 extern int redisGetReplyFromReader(redisContext *, void **);
 
-/* Write a formatted command to the output buffer. */
-extern int redisAppendFormattedCommand(redisContext *, const char *, size_t);
-
 struct redisAsyncContext;
 struct dict;
 
-typedef void (redisCallBackFunc)(struct redisAsyncContext *, void *, void *);
+typedef void (redisAsyncCallBack)(struct redisAsyncContext *, redisReply *, void *);
 typedef struct redisCallBack {
     struct redisCallBack	*next; /* simple singly linked list */
-    redisCallBackFunc		*func;
+    redisAsyncCallBack		*func;
     void			*privdata;
 } redisCallBack;
 
@@ -247,8 +253,8 @@ typedef struct redisCallBackList {
 } redisCallBackList;
 
 /* Connection callback prototypes */
-typedef void (redisDisconnectCallBack)(const struct redisAsyncContext*, int);
-typedef void (redisConnectCallBack)(const struct redisAsyncContext*, int);
+typedef void (redisDisconnectCallBack)(const struct redisAsyncContext *, int);
+typedef void (redisConnectCallBack)(const struct redisAsyncContext *, int);
 
 /* Context for an async connection to Redis */
 typedef struct redisAsyncContext {
@@ -295,6 +301,7 @@ extern redisAsyncContext *redisAsyncConnectBindWithReuse(const char *, int, cons
 extern redisAsyncContext *redisAsyncConnectUnix(const char *);
 extern int redisAsyncSetConnectCallBack(redisAsyncContext *, redisConnectCallBack *);
 extern int redisAsyncSetDisconnectCallBack(redisAsyncContext *, redisDisconnectCallBack *);
+extern int redisAsyncEnableKeepAlive(redisAsyncContext *);
 extern void redisAsyncDisconnect(redisAsyncContext *);
 extern void redisAsyncFree(redisAsyncContext *);
 
@@ -306,6 +313,6 @@ extern void redisAsyncHandleWrite(redisAsyncContext *);
  * Command function for an async context.
  * Write the command to the output buffer and register the provided callback.
  */
-extern int redisAsyncFormattedCommand(redisAsyncContext *, redisCallBackFunc *, void *, const char *, size_t);
+extern int redisAsyncFormattedCommand(redisAsyncContext *, redisAsyncCallBack *, void *, const char *, size_t);
 
 #endif /* SERIES_REDIS_H */

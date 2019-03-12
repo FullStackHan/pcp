@@ -469,7 +469,8 @@ GetPorts(char *file)
 	fprintf(mapstream, "%s\n", pmcd_host);
 
 	/* then the full pathname to the archive base */
-	__pmNativePath(archBase);
+	/* THREADSAFE - no locks acquired in __pmNativePath() */
+	archBase = __pmNativePath(archBase);
 	if (__pmAbsolutePath(archBase))
 	    fprintf(mapstream, "%s\n", archBase);
 	else {
@@ -692,7 +693,7 @@ init_ports(void)
 
 	/* Remove the symlink if it points to a stale primary pmlogger socket */
 	if ((pidlen = readlink(linkSocketPath, pidfile, sizeof(pidfile))) > 0) {
-	    pidfile[pidlen] = '\0';
+	    pidfile[pidlen-1] = '\0';
 	    for (i=0; i < pidlen; i++) {
 		/* first digit is the start of the PID */
 		if (isdigit((int)pidfile[i])) {
@@ -776,6 +777,8 @@ check_local_creds(__pmHashCtl *attrs)
 			(const char *)node->data : NULL);
     if (connectingUser == NULL) {
 	/* We don't know who is connecting. */
+	if (pmDebugOptions.context)
+	    fprintf(stderr, "check_local_creds: connectingUser is NULL => connection refused\n");
 	return PM_ERR_PERMISSION;
     }
 
@@ -784,6 +787,8 @@ check_local_creds(__pmHashCtl *attrs)
     connectingUid = strtol(connectingUser, &end, 0);
     if (errno != 0 || *end != '\0') {
 	/* Can't convert the connecting user to a uid cleanly. */
+	if (pmDebugOptions.context)
+	    fprintf(stderr, "check_local_creds: connectingUser \"%s\" is bad => connection refused\n", connectingUser);
 	return PM_ERR_PERMISSION;
     }
 
@@ -796,6 +801,8 @@ check_local_creds(__pmHashCtl *attrs)
 	return 0;
 
     /* Connection is not allowed. */
+    if (pmDebugOptions.context)
+	fprintf(stderr, "check_local_creds: uid connecting %ld != %ld or %ld => connection refused\n", (long)connectingUid, (long)getuid(), (long)geteuid());
     return PM_ERR_PERMISSION;
 }
 #endif /* defined(HAVE_STRUCT_SOCKADDR_UN) */

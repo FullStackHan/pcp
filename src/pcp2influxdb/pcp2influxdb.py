@@ -1,7 +1,7 @@
 #!/usr/bin/env pmpython
 #
-# Copyright (C) 2014-2017 Red Hat
-# Copyright (C) 2015-2018 Marko Myllynen <myllynen@redhat.com>
+# Copyright (C) 2015-2019 Marko Myllynen <myllynen@redhat.com>
+# Copyright (C) 2014-2018 Red Hat.
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
@@ -34,8 +34,7 @@ import requests
 
 # PCP Python PMAPI
 from pcp import pmapi, pmconfig
-from cpmapi import PM_CONTEXT_ARCHIVE, PM_ERR_EOL, PM_DEBUG_APPL1
-from cpmapi import PM_TIME_NSEC
+from cpmapi import PM_CONTEXT_ARCHIVE, PM_DEBUG_APPL1, PM_TIME_NSEC
 
 if sys.version_info[0] >= 3:
     long = int # pylint: disable=redefined-builtin
@@ -76,7 +75,7 @@ class Metric(object):
 
     def add_field(self, key="value", value=None):
         """ Add field """
-        if value:
+        if value is not None:
             self.fields[key] = value
 
     def set_tag_string(self, tag_str):
@@ -166,8 +165,9 @@ class PCP2InfluxDB(object):
                      'count_scale', 'space_scale', 'time_scale', 'version',
                      'count_scale_force', 'space_scale_force', 'time_scale_force',
                      'type_prefer', 'precision_force', 'limit_filter', 'limit_filter_force',
-                     'live_filter', 'rank', 'invert_filter', 'predicate',
-                     'speclocal', 'instances', 'ignore_incompat', 'omit_flat')
+                     'live_filter', 'rank', 'invert_filter', 'predicate', 'names_change',
+                     'speclocal', 'instances', 'ignore_incompat', 'ignore_unknown',
+                     'omit_flat')
 
         # The order of preference for options (as present):
         # 1 - command line options
@@ -188,6 +188,8 @@ class PCP2InfluxDB(object):
         self.type = 0
         self.type_prefer = self.type
         self.ignore_incompat = 0
+        self.ignore_unknown = 0
+        self.names_change = 0 # ignore
         self.instances = []
         self.live_filter = 0
         self.rank = 0
@@ -236,7 +238,7 @@ class PCP2InfluxDB(object):
         opts = pmapi.pmOptions()
         opts.pmSetOptionCallback(self.option)
         opts.pmSetOverrideCallback(self.option_override)
-        opts.pmSetShortOptions("a:h:LK:c:Ce:D:V?HGA:S:T:O:s:t:rRIi:jJ:8:9:nN:vP:0:q:b:y:Q:B:Y:g:x:U:E:X:")
+        opts.pmSetShortOptions("a:h:LK:c:Ce:D:V?HGA:S:T:O:s:t:rRIi:jJ:4:58:9:nN:vP:0:q:b:y:Q:B:Y:g:x:U:E:X:")
         opts.pmSetShortUsage("[option...] metricspec [...]")
 
         opts.pmSetLongOptionHeader("General options")
@@ -266,6 +268,8 @@ class PCP2InfluxDB(object):
         opts.pmSetLongOption("raw", 0, "r", "", "output raw counter values (no rate conversion)")
         opts.pmSetLongOption("raw-prefer", 0, "R", "", "prefer output raw counter values (no rate conversion)")
         opts.pmSetLongOption("ignore-incompat", 0, "I", "", "ignore incompatible instances (default: abort)")
+        opts.pmSetLongOption("ignore-unknown", 0, "5", "", "ignore unknown metrics (default: abort)")
+        opts.pmSetLongOption("names-change", 1, "4", "ACTION", "update/ignore/abort on PMNS change (default: ignore)")
         opts.pmSetLongOption("instances", 1, "i", "STR", "instances to report (default: all current)")
         opts.pmSetLongOption("live-filter", 0, "j", "", "perform instance live filtering")
         opts.pmSetLongOption("rank", 1, "J", "COUNT", "limit results to COUNT highest/lowest valued instances")
@@ -287,7 +291,7 @@ class PCP2InfluxDB(object):
         opts.pmSetLongOption("db-name", 1, "x", "DATABASE", "metrics database name (default: " + DB + ")")
         opts.pmSetLongOption("db-user", 1, "U", "USERNAME", "username for database")
         opts.pmSetLongOption("db-pass", 1, "E", "PASSWORD", "password for database")
-        opts.pmSetLongOption("db-tags", 1, "X", "TAGS", "string of tags to add to the metrics")
+        opts.pmSetLongOption("db-tags", 1, "X", "TAGS", "string of tags to add to metrics")
 
         return opts
 
@@ -297,8 +301,8 @@ class PCP2InfluxDB(object):
             return 1
         return 0
 
-    def option(self, opt, optarg, index):
-        """ Perform setup for an individual command line option """
+    def option(self, opt, optarg, _index):
+        """ Perform setup for individual command line option """
         if opt == 'daemonize':
             self.daemonize = 1
         elif opt == 'K':
@@ -325,6 +329,18 @@ class PCP2InfluxDB(object):
             self.type_prefer = 1
         elif opt == 'I':
             self.ignore_incompat = 1
+        elif opt == '5':
+            self.ignore_unknown = 1
+        elif opt == '4':
+            if optarg == 'ignore':
+                self.names_change = 0
+            elif optarg == 'abort':
+                self.names_change = 1
+            elif optarg == 'update':
+                self.names_change = 2
+            else:
+                sys.stderr.write("Unknown names-change action '%s' specified.\n" % optarg)
+                sys.exit(1)
         elif opt == 'i':
             self.instances = self.instances + self.pmconfig.parse_instances(optarg)
         elif opt == 'j':
@@ -371,7 +387,7 @@ class PCP2InfluxDB(object):
             raise pmapi.pmUsageErr()
 
     def connect(self):
-        """ Establish a PMAPI context """
+        """ Establish PMAPI context """
         context, self.source = pmapi.pmContext.set_connect_options(self.opts, self.source, self.speclocal)
 
         self.pmfg = pmapi.fetchgroup(context, self.source)
@@ -425,19 +441,17 @@ class PCP2InfluxDB(object):
             time.sleep(align)
 
         # Main loop
+        refresh_metrics = 0
         while self.samples != 0:
-            # Fetch values
-            try:
-                self.pmfg.fetch()
-            except pmapi.pmErr as error:
-                if error.args[0] == PM_ERR_EOL:
-                    break
-                raise error
+            # Refresh metrics as needed
+            if refresh_metrics:
+                refresh_metrics = 0
+                self.pmconfig.update_metrics(curr_insts=not self.live_filter)
 
-            # Watch for endtime in uninterpolated mode
-            if not self.interpol:
-                if float(self.pmfg_ts().strftime('%s')) > float(self.opts.pmGetOptionFinish()):
-                    break
+            # Fetch values
+            refresh_metrics = self.pmconfig.fetch()
+            if refresh_metrics < 0:
+                break
 
             # Report and prepare for the next round
             self.report(self.pmfg_ts())
@@ -450,8 +464,8 @@ class PCP2InfluxDB(object):
         self.report(None)
 
     def report(self, tstamp):
-        """ Report the metric values """
-        if tstamp != None:
+        """ Report metric values """
+        if tstamp is not None:
             tstamp = tstamp.strftime(self.timefmt)
 
         self.write_influxdb(tstamp)
@@ -479,10 +493,10 @@ class PCP2InfluxDB(object):
             return
 
         def sanitize_name_indom(string):
-            """ Sanitize the instance domain string for InfluxDB """
+            """ Sanitize instance domain string for InfluxDB """
             return "_" + re.sub('[^a-zA-Z_0-9-]', '_', string)
 
-        results = self.pmconfig.get_sorted_results()
+        results = self.pmconfig.get_ranked_results(valid_only=True)
 
         # Prepare data for easier processing below
         metrics = []
@@ -520,7 +534,7 @@ class PCP2InfluxDB(object):
                 if res.status_code == 200:
                     msg += "InfluxDB could not complete the request."
                 elif res.status_code == 404:
-                    msg += "Got an HTTP code 404. This most likely means "
+                    msg += "Got HTTP code 404. This most likely means "
                     msg += "that the requested database '"
                     msg += self.influx_db
                     msg += "' does not exist.\n"
@@ -536,9 +550,9 @@ class PCP2InfluxDB(object):
 
                 sys.stderr.write(msg)
         except ValueError:
-            sys.stderr.write("Can't send a request that has no metrics.\n")
+            sys.stderr.write("Can't send request that has no metrics.\n")
         except requests.exceptions.ConnectionError as error:
-            sys.stderr.write("Can't connect to InfluxDB server %s: %s, continuing.\n" % (self.influx_server, str(error.args[0].reason)))
+            sys.stderr.write("Can't connect to InfluxDB server %s: %s, continuing.\n" % (self.influx_server, str(error)))
 
     def finalize(self):
         """ Finalize and clean up """
@@ -551,9 +565,8 @@ if __name__ == '__main__':
         P.validate_config()
         P.execute()
         P.finalize()
-
     except pmapi.pmErr as error:
-        sys.stderr.write('%s: %s\n' % (error.progname(), error.message()))
+        sys.stderr.write("%s: %s\n" % (error.progname(), error.message()))
         sys.exit(1)
     except pmapi.pmUsageErr as usage:
         usage.message()

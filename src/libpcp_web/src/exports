@@ -74,3 +74,56 @@ PCP_WEB_1.5 {
     pmLogLevelPrint;
     pmLogLevelStr;
 } PCP_WEB_1.4;
+
+PCP_WEB_1.6 {
+  global:
+    pmDiscoverSetup;
+    pmDiscoverSetSlots;
+    pmDiscoverSetHostSpec;
+    pmDiscoverSetEventLoop;
+    pmDiscoverSetMetricRegistry;
+    pmDiscoverClose;
+
+    pmSeriesSetup;
+    pmSeriesSetSlots;
+    pmSeriesSetHostSpec;
+    pmSeriesSetEventLoop;
+    pmSeriesSetMetricRegistry;
+    pmSeriesClose;
+
+    pmSeriesDiscoverSource;
+    pmSeriesDiscoverClosed;
+    pmSeriesDiscoverLabels;
+    pmSeriesDiscoverMetric;
+    pmSeriesDiscoverValues;
+    pmSeriesDiscoverInDom;
+    pmSeriesDiscoverText;
+
+    redisSlotsConnect;
+    redisSlotsFree;
+    redisSlotsProxyConnect;
+    redisSlotsProxyFree;
+    sdsDictCallBacks;
+
+    dictAdd;
+    dictAddRaw;
+    dictCreate;
+    dictFind;
+    dictRelease;
+
+} PCP_WEB_1.5;
+
+PCP_WEB_1.7 {
+  global:
+    ini_parse;
+    pmIniFileParse;
+} PCP_WEB_1.6;
+
+PCP_WEB_1.8 {
+  global:
+    http_errno_name;
+    http_errno_description;
+    http_should_keep_alive;
+    http_parser_execute;
+    http_parser_init;
+} PCP_WEB_1.7;

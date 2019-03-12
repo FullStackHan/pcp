@@ -16,7 +16,7 @@ TESTS	= $(shell sed -n -e '/^[0-9]/s/:retired//' -e '/^[0-9][0-9]*:reserved/d' -
 
 SUBDIRS = src pmdas cisco gluster pconf sadist collectl nfsclient named \
 	  archives badarchives views qt linux unbound cifs gpfs lustre ganglia \
-	  java mmv postfix perl json slurm tmparch sheet smart
+	  java mmv postfix perl json slurm tmparch sheet smart admin
 ifeq "$(PMDA_PERFEVENT)" "true"
 SUBDIRS += perfevent
 endif
@@ -32,7 +32,7 @@ endif
 #
 %.out: %
 
-default_pcp default: new remake check qa_outfiles localconfig $(OTHERS) $(SUBDIRS)
+default_pcp default: qa_outfiles localconfig $(SUBDIRS)
 	$(SUBDIRS_MAKERULE)
 
 setup: $(SUBDIRS) localconfig qa_hosts
@@ -45,7 +45,7 @@ LDIRT += 051.work 134.full.* \
 	 *.bak *.bad *.core *.full *.notrun *.raw *.o core a.out core.* \
 	 *.log eek* urk* so_locations tmp.* gmon.out oss.qa.tar.gz \
 	 *.full.ok *.new rc_cron_check.clean \
-	  make.out qa_hosts qa_outfiles localconfig check.time
+	  make.out qa_hosts qa_outfiles stap_*.ko localconfig check.time
 	# these ones are links to the real files created when the associated
 	# test is run
 LDIRT += $(shell [ -f .gitignore ] && grep '\.out$$' .gitignore)
@@ -59,7 +59,7 @@ COMMON_SCRIPTS = common.install.cisco common.pcpweb
 COMMON = common.check common.config common.filter \
 	 common.product common.rc common.setup \
 	 common.secure common.gfs2 common.rpm \
-	 common.qt common.avahi common.docker \
+	 common.qt common.avahi common.containers \
 	 common.discovery common.compress common.webapi \
 	 common.python common.prometheus common.bcc
 

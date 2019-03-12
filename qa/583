@@ -58,9 +58,22 @@ _filter()
 	-e 's/\(pmie[([]\)[0-9][0-9]*/\1PID/'
 }
 
+_cleanup()
+{
+    _service pcp restart 2>&1 | _filter_pcp_stop | _filter_pcp_start
+    _wait_for_pmcd
+    _restore_auto_restart pmcd
+    _wait_for_pmlogger
+    _restore_auto_restart pmlogger
+
+    $sudo rm -f $tmp.*
+}
+
 signal=$PCP_BINADM_DIR/pmsignal
 status=0	# success is the default!
-trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+trap "_cleanup; exit \$status" 0 1 2 3 15
+_stop_auto_restart pmcd
+_stop_auto_restart pmlogger
 
 PMCD_CONNECT_TIMEOUT=60
 PMCD_REQUEST_TIMEOUT=60
@@ -94,7 +107,7 @@ fi
 # real QA test starts here
 $sudo rm -f core* $seq.core*
 
-_service pmcd stop | _filter_pcp_start
+_service pmcd stop 2>&1 | _filter_pcp_start
 _service pmlogger stop | _filter_pcp_start
 _wait_pmcd_end
 
@@ -122,7 +135,7 @@ pmie -t 1sec >$tmp.out 2>$tmp.err <$tmp.in &
 pmie_pid=$!
 
 sleep 5
-_service pmcd start | _filter_pcp_start
+_service pmcd start 2>&1 | _filter_pcp_start
 _wait_for_pmcd
 _service pmlogger start | _filter_pcp_start
 _wait_for_pmlogger
@@ -173,9 +186,9 @@ if $have_journalctl
 then
     # be careful ... --boot not supported in all versions, -l not
     # supported in all versions
-    $sudo journalctl -b --full | tail -100 >$tmp.syslog
+    $sudo journalctl -b --full | tail -200 >$tmp.syslog
 else
-    $sudo tail -100 $SYSLOG >$tmp.syslog
+    $sudo tail -200 $SYSLOG >$tmp.syslog
 fi
 sed <$tmp.syslog -n \
     -e '/message repeated [1-9][0-9]* times/d' \

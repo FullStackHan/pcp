@@ -32,9 +32,6 @@ SCRIPTS = pmnsadd
 LOCKERS	= lockpmns unlockpmns
 STDPMID = stdpmid.pcp stdpmid.local
 
-LSRCFILES = Make.stdpmid GNUmakefile.install Rebuild ReplacePmnsSubtree \
-	    $(STDPMID) $(SCRIPTS) $(LOCKERS)
-
 LLDLIBS = $(PCPLIB)
 LDIRT	= *.log *.pmns stdpmid .NeedRebuild build.script $(TARGETS)
 
@@ -63,7 +60,7 @@ install:	default
 	$(INSTALL) -m 755 Rebuild $(PMNS_VAR_DIR)/Rebuild
 	$(INSTALL) -m 755 Make.stdpmid $(PMNS_VAR_DIR)/Make.stdpmid
 	$(INSTALL) -m 644 $(STDPMID) $(PMNS_VAR_DIR)
-ifeq (, $(filter redhat debian, $(PACKAGE_DISTRIBUTION)))
+ifeq (, $(filter redhat debian suse, $(PACKAGE_DISTRIBUTION)))
 	$(INSTALL) -m 644 .NeedRebuild $(PMNS_VAR_DIR)/.NeedRebuild
 endif
 
@@ -79,3 +76,6 @@ default_pcp:	default
 install_pcp:	install
 
 pmnsdel.o pmnsmerge.o pmnsutil.o:	$(TOPDIR)/src/include/pcp/libpcp.h
+
+check:: $(CFILES)
+	$(CLINT) $^

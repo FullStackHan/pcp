@@ -31,6 +31,7 @@
 static int __pmMergeLabels(const char *, const char *, char *, int);
 static int __pmParseLabels(const char *, int, pmLabel *, int, char *, int *);
 
+/* coverity[+free] : arg-0 */
 void
 pmFreeLabelSets(pmLabelSet *sets, int nsets)
 {
@@ -42,17 +43,22 @@ pmFreeLabelSets(pmLabelSet *sets, int nsets)
 	if (sets[i].json)
 	    free(sets[i].json);
     }
-    if (nsets > 0)
+    if (sets != NULL) {
+	assert(nsets > 0);
 	free(sets);
+    }
 }
 
-static pmLabelSet *
+pmLabelSet *
 __pmDupLabelSets(pmLabelSet *source, int nsets)
 {
     pmLabelSet	*sets, *target;
     size_t	size;
     int		i;
 
+    if (nsets == 0 || source == NULL)
+	return NULL;
+    
     assert(nsets > 0);
     if ((sets = (pmLabelSet *)calloc(nsets, sizeof(pmLabelSet))) == NULL)
 	return NULL;
@@ -304,13 +310,14 @@ verify_label_name(pmLabel *lp, const char *json)
  * Sort and verify labels in the set - no (internal) duplicate
  * names are allowed, and the naming rules must be satisfied.
  */
-int
+static int
 sort_labels(pmLabel *lp, int nlabels, const char *json)
 {
     void	*data = (void *)json;
     int		i;
 
-    sort_r(lp, nlabels, sizeof(pmLabel), namecmp, data);
+    if (nlabels > 1)
+	sort_r(lp, nlabels, sizeof(pmLabel), namecmp, data);
 
     for (i = 0; i < nlabels-1; i++) {
 	if (namecmp(&lp[i], &lp[i+1], data) == 0) {
@@ -325,6 +332,16 @@ sort_labels(pmLabel *lp, int nlabels, const char *json)
 			    (int)lp[i].namelen, label_name(&lp[i], json));
 	    return -EINVAL;
 	}
+    }
+
+    /* Verify the name of the final label */
+    assert(nlabels > 0); /* not called otherwise */
+    assert(i == nlabels - 1);
+    if (verify_label_name(&lp[i], json) < 0) {
+	if (pmDebugOptions.labels)
+	    pmNotifyErr(LOG_ERR, "Label name is invalid %.*s",
+			    (int)lp[i].namelen, label_name(&lp[i], json));
+	return -EINVAL;
     }
     return 0;
 }
@@ -529,6 +546,14 @@ __pmMergeLabelSets(pmLabel *alabels, const char *abuf, int na,
     if (no)
 	*no = 0;	/* number of output labels */
 
+    /* integrity check */
+    if ((na > 0 && alabels == NULL) || (nb > 0 && blabels == NULL)) {
+	if (pmDebugOptions.labels)
+	    fprintf(stderr, "__pmMergeLabelSets: invalid or corrupt arguments\n");
+	sts = -EINVAL;
+	goto done;
+    }
+
     /* Walk over both label sets inserting all names into the output
      * buffer, but prefering b-group values over those in the a-group.
      * As we go, check for duplicates between a-group & b-group (since
@@ -631,7 +656,7 @@ pmMergeLabelSets(pmLabelSet **sets, int nsets, char *buffer, int buflen,
 	return -EINVAL;
 
     for (i = 0; i < nsets; i++) {
-	if (sets[i] == NULL)
+	if (sets[i] == NULL || sets[i]->nlabels < 0)
 	    continue;
 
 	/* avoid overwriting the working set, if there is one */
@@ -1003,13 +1028,13 @@ pmLookupLabels(pmID pmid, pmLabelSet **labels)
     pmLabelSet	*lsp = NULL, *sets = NULL;
     pmDesc	desc;
     pmID	ident;
-    int		n, sts, count, total;
+    int		sts, count, total;
 
     if ((sts = pmLookupDesc(pmid, &desc)) < 0)
 	return sts;
 
-    /* context, domain, [indom], cluster, item, [insts...] */
-    total = (desc.indom == PM_INDOM_NULL) ? 4 : 6;
+    /* context, domain, [indom], cluster, item */
+    total = (desc.indom == PM_INDOM_NULL) ? 4 : 5;
     if ((sets = calloc(total, sizeof(pmLabelSet))) == NULL)
 	return -ENOMEM;
     count = 0;
@@ -1058,27 +1083,6 @@ pmLookupLabels(pmID pmid, pmLabelSet **labels)
 	sets[count++] = *lsp;
 	free(lsp);
 	lsp = NULL;
-    }
-
-    if (desc.indom != PM_INDOM_NULL) {
-	if ((sts = n = pmGetInstancesLabels(desc.indom, &lsp)) < 0)
-	    goto fail;
-	if (lsp && n + count > total) {
-	    /* make space on the end for additional instance sets */
-	    sets = realloc(sets, (count + n) * sizeof(pmLabelSet));
-	    if (sets == NULL) {
-		free(lsp);
-		lsp = NULL;
-		sts = -ENOMEM;
-		goto fail;
-	    }
-	}
-	if (lsp) {
-	    memcpy(&sets[count], lsp, n * sizeof(pmLabelSet));
-	    count += n;
-	    free(lsp);
-	    lsp = NULL;
-	}
     }
 
     *labels = sets;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018 Red Hat.
+ * Copyright (c) 2012-2019 Red Hat.
  * Copyright (c) 1997,2004 Silicon Graphics, Inc.  All Rights Reserved.
  *
  * This library is free software; you can redistribute it and/or modify it
@@ -220,6 +220,7 @@ typedef struct pmDesc {
 #define PM_ERR_NEEDCLIENTCERT	(-PM_ERR_BASE-63)   /* PMCD requires a client certificate */
 #define PM_ERR_BADDERIVE	(-PM_ERR_BASE-64)   /* Derived metric definition failed */
 #define PM_ERR_NOLABELS		(-PM_ERR_BASE-65)   /* No support for label metadata */
+#define PM_ERR_PMDAFENCED	(-PM_ERR_BASE-66)   /* PMDA is currently fenced and unable to respond to requests */
 
 /* retired PM_ERR_CTXBUSY (-PM_ERR_BASE-97) Context is busy */
 #define PM_ERR_TOOSMALL		(-PM_ERR_BASE-98)   /* Insufficient elements in list */
@@ -678,8 +679,8 @@ PCP_CALL extern int pmStore(const pmResult *);
 /* Get help and descriptive text */
 PCP_CALL extern int pmLookupText(pmID, int, char **);
 PCP_CALL extern int pmLookupInDomText(pmInDom, int, char **);
-#define PM_TEXT_ONELINE	1
-#define PM_TEXT_HELP	2
+#define PM_TEXT_ONELINE		1
+#define PM_TEXT_HELP		2
 
 /*
  * For the help text PDUs, the type (PM_TEXT_ONELINE or PM_TEXT_HELP)

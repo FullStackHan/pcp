@@ -264,7 +264,7 @@ pmGetContextHostName_r(int handle, char *buf, int buflen)
 	    PM_TPD(curr_ctxp) = ctxp;
 
 	    name = "pmcd.hostname";
-	    sts = pmLookupName_ctx(ctxp, 1, &name, &pmid);
+	    sts = pmLookupName_ctx(ctxp, PM_NOT_LOCKED, 1, &name, &pmid);
 	    if (sts >= 0)
 		sts = pmFetch_ctx(ctxp, 1, &pmid, &resp);
 	    if (pmDebugOptions.context)
@@ -384,7 +384,7 @@ initcontextlock(pthread_mutex_t *lock)
 }
 
 #else
-#define initcontextlock(x)	do { } while (1)
+#define initcontextlock(x)	do { } while (0)
 #endif
 
 static int
@@ -557,7 +557,9 @@ __pmFindOrOpenArchive(__pmContext *ctxp, const char *name, int multi_arch)
 	 */
 	if (lcp2 != NULL) {
 	    if (lcp) {
+#ifdef PM_MULTI_THREAD
 		__pmDestroyMutex(&lcp->l_lock);
+#endif
 		free(lcp);
 	    }
 	    ++lcp2->l_refcnt;
@@ -593,13 +595,17 @@ __pmFindOrOpenArchive(__pmContext *ctxp, const char *name, int multi_arch)
 	    pmNoMem("__pmFindOrOpenArchive", sizeof(*lcp), PM_FATAL_ERR);
 	    /* NOTREACHED */
 	}
+#ifdef PM_MULTI_THREAD
 	__pmInitMutex(&lcp->l_lock);
+#endif
 	lcp->l_multi = multi_arch;
 	acp->ac_log = lcp;
     }
     sts = __pmLogOpen(name, ctxp);
     if (sts < 0) {
+#ifdef PM_MULTI_THREAD
 	__pmDestroyMutex(&lcp->l_lock);
+#endif
 	free(lcp);
 	acp->ac_log = NULL;
     }
@@ -1842,13 +1848,13 @@ __pmIsLogCtlLock(void *lock)
 	    }
 	    else {
 		char	*result_new;
-		reslen += strlen(number)+1;
+		reslen += 1 + strlen(number) + 1;
 		if ((result_new = (char *)realloc(result, reslen)) == NULL) {
 		    pmNoMem("__pmIsLogCtlLock: realloc", reslen, PM_FATAL_ERR);
 		    /* NOTREACHED */
 		}
 		result = result_new;
-		strncat(result, ",", 1);
+		strncat(result, ",", 2);
 		strncat(result, number, strlen(number)+1);
 	    }
 	}

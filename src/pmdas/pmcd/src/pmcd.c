@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2018 Red Hat.
+ * Copyright (c) 2013-2019 Red Hat.
  * Copyright (c) 1995-2004 Silicon Graphics, Inc.  All Rights Reserved.
  * 
  * This program is free software; you can redistribute it and/or modify it
@@ -183,6 +183,8 @@ static pmDesc	desctab[] = {
     { PMDA_PMID(4,0), PM_TYPE_U32, PM_INDOM_NULL, PM_SEM_DISCRETE, PMDA_PMUNITS(0,0,0,0,0,0) },
 /* agent.status */
     { PMDA_PMID(4,1), PM_TYPE_32, PM_INDOM_NULL, PM_SEM_DISCRETE, PMDA_PMUNITS(0,0,0,0,0,0) },
+/* agent.fenced */
+    { PMDA_PMID(4,2), PM_TYPE_U32, PM_INDOM_NULL, PM_SEM_INSTANT, PMDA_PMUNITS(0,0,0,0,0,0) },
 
 /* pmie.configfile */
     { PMDA_PMID(5,0), PM_TYPE_STRING, PM_INDOM_NULL, PM_SEM_DISCRETE, PMDA_PMUNITS(0,0,0,0,0,0) },
@@ -300,6 +302,7 @@ typedef struct {
 typedef struct {
     int			id;		/* index into client[] */
     int			seq;
+    int			uid;
     int			state;
     pmcd_container_t	container;
     pmcd_whoami_t	whoami;
@@ -313,7 +316,9 @@ typedef struct {
 
 static perctx_t *ctxtab;
 static int      num_ctx;
+#ifndef IS_MINGW
 static int      rootfd = -1;
+#endif
 
 /*
  * expand and initialize the per client context table
@@ -330,11 +335,39 @@ grow_ctxtab(int ctx)
 	memset(&ctxtab[num_ctx], 0, sizeof(perctx_t));
 	ctxtab[num_ctx].id = -1;
 	ctxtab[num_ctx].seq = -1;
+	ctxtab[num_ctx].uid = -1;
 	num_ctx++;
     }
     memset(&ctxtab[ctx], 0, sizeof(perctx_t));
     ctxtab[ctx].id = -1;
     ctxtab[ctx].seq = -1;
+    ctxtab[ctx].uid = -1;
+}
+
+/*
+ * find an active process identifier for a given service
+ */
+static int
+extract_service(const char *path, char *name)
+{
+    int		sep = pmPathSeparator();
+    char	fullpath[MAXPATHLEN];
+    char	buffer[64];
+    FILE	*fp;
+    pid_t	pid;
+
+    /* extract PID lurking within the file */
+    pmsprintf(fullpath, sizeof(fullpath), "%s%c%s.pid", path, sep, name);
+    if ((fp = fopen(fullpath, "r")) == NULL)
+	return 0;
+    sep = fscanf(fp, "%63s", buffer);
+    fclose(fp);
+    if (sep != 1)
+	return 0;
+    pid = atoi(buffer);
+    if (!__pmProcessExists(pid))
+	return 0;
+    return pid;
 }
 
 /*
@@ -377,6 +410,7 @@ init_tables(int dom)
     ndesc--;
 }
 
+#ifndef IS_MINGW
 /*
  * Ensure we have a connection to pmdaroot in case we need it.
  * Note this must be done early-on (init) only, because pmcd
@@ -393,6 +427,7 @@ init_pmdaroot_connect(void)
 			osstrerror());
     }
 }
+#endif
 
 static int
 pmcd_profile(pmProfile *prof, pmdaExt *pmda)
@@ -407,6 +442,8 @@ remove_pmie_indom(void)
     int n;
 
     for (n = 0; n < npmies; n++) {
+	if (pmies[n].pid == 0)
+	    continue;	/* primary instance */
 	free(pmies[n].name);
 	__pmMemoryUnmap(pmies[n].mmap, pmies[n].size);
     }
@@ -440,7 +477,8 @@ static unsigned int
 refresh_pmie_indom(void)
 {
     static struct stat	lastsbuf;
-    pid_t		pmiepid;
+    pid_t		pmiepid, primary;
+    pmie_t		*pmiep;
     struct dirent	*dp;
     struct stat		statbuf;
     size_t		size;
@@ -448,7 +486,7 @@ refresh_pmie_indom(void)
     char		fullpath[MAXPATHLEN];
     void		*ptr;
     DIR			*pmiedir;
-    int			fd;
+    int			fd, pindex = -1;
     int			sep = pmPathSeparator();
 
     pmsprintf(fullpath, sizeof(fullpath), "%s%c%s",
@@ -461,6 +499,9 @@ refresh_pmie_indom(void)
 	    /* tear down the old instance domain */
 	    if (pmies)
 		remove_pmie_indom();
+
+	    /* extract PID for primary pmie instance, if any */
+	    primary = extract_service(pmGetConfig("PCP_RUN_DIR"), PMIE_SUBDIR);
 
 	    /* open the directory iterate through mmaping as we go */
 	    if ((pmiedir = opendir(fullpath)) == NULL) {
@@ -490,11 +531,12 @@ refresh_pmie_indom(void)
 		    pmNoMem("pmie iname", strlen(dp->d_name), PM_RECOV_ERR);
 		    continue;
 		}
-		if ((pmies = (pmie_t *)realloc(pmies, size)) == NULL) {
+		if ((pmiep = (pmie_t *)realloc(pmies, size)) == NULL) {
 		    pmNoMem("pmie instlist", size, PM_RECOV_ERR);
 		    free(endp);
 		    continue;
 		}
+		pmies = pmiep;
 		if ((fd = open(fullpath, O_RDONLY)) < 0) {
 		    pmNotifyErr(LOG_WARNING, "pmcd pmda cannot open %s: %s",
 				fullpath, osstrerror());
@@ -516,6 +558,8 @@ refresh_pmie_indom(void)
 		    free(endp);
 		    continue;
 		}
+		if (pmiepid == primary)
+		    pindex = npmies;
 		pmies[npmies].pid = pmiepid;
 		pmies[npmies].name = endp;
 		pmies[npmies].size = statbuf.st_size;
@@ -523,6 +567,20 @@ refresh_pmie_indom(void)
 		npmies++;
 	    }
 	    closedir(pmiedir);
+
+	    if (pindex != -1) {
+		size = (npmies+1) * sizeof(pmie_t);
+		if ((pmiep = (pmie_t *)realloc(pmies, size)) == NULL) {
+		    pmNoMem("pmie instlist", size, PM_RECOV_ERR);
+		    free(endp);
+		} else {
+		    pmies = pmiep;
+		    pmies[npmies] = pmies[pindex];	/* struct copy */
+		    pmies[npmies].name = "primary";
+		    pmies[npmies].pid = 0;
+		    npmies++;
+		}
+	    }
 	}
     }
     else {
@@ -1051,29 +1109,6 @@ tzinfo(void)
     return __pmTimezone();
 }
 
-static int
-extract_service(const char *path, char *name)
-{
-    int		sep = pmPathSeparator();
-    char	fullpath[MAXPATHLEN];
-    char	buffer[64];
-    FILE	*fp;
-    pid_t	pid;
-
-    /* extract PID lurking within the file */
-    pmsprintf(fullpath, sizeof(fullpath), "%s%c%s.pid", path, sep, name);
-    if ((fp = fopen(fullpath, "r")) == NULL)
-	return 0;
-    sep = fscanf(fp, "%63s", buffer);
-    fclose(fp);
-    if (sep != 1)
-	return 0;
-    pid = atoi(buffer);
-    if (!__pmProcessExists(pid))
-	return 0;
-    return strlen(name);
-}
-
 static char *
 services(void)
 {
@@ -1096,8 +1131,9 @@ services(void)
 	    offset = sizeof(PM_SERVER_SERVICE_SPEC) - 1;
 
 	    for (i = 0; i < sizeof(services)/sizeof(services[0]); i++) {
-		if ((length = extract_service(path, services[i])) <= 0)
+		if (extract_service(path, services[i]) <= 0)
 		    continue;
+		length = strlen(services[i]);
 		if (offset + 1 + length + 1 > sizeof(servicelist))
 		    continue;
 		servicelist[offset++] = ' ';
@@ -1132,6 +1168,7 @@ fetch_feature(int item, pmAtomValue *avp)
     return 0;
 }
 
+#ifndef IS_MINGW
 static pmcd_container_t *
 ctx_container(int ctx)
 {
@@ -1139,6 +1176,7 @@ ctx_container(int ctx)
 	return &ctxtab[ctx].container;
     return NULL;
 }
+#endif
 
 static char *
 ctx_hostname(int ctx, char **hostname)
@@ -1154,13 +1192,16 @@ ctx_hostname(int ctx, char **hostname)
 static char *
 fetch_hostname(int ctx, pmAtomValue *avp, char **hostname)
 {
+#ifndef IS_MINGW
     static char		host[MAXHOSTNAMELEN];
     pmcd_container_t	*container;
     int			sts;
+#endif
 
     if (*hostname)	/* ensure we only ever refresh once-per-fetch */
 	return avp->cp = *hostname;
 
+#ifndef IS_MINGW
     /* see if we're dealing with a request within a container */
     if ((container = ctx_container(ctx)) != NULL &&
 	((sts = pmdaRootContainerHostName(rootfd,
@@ -1169,6 +1210,7 @@ fetch_hostname(int ctx, pmAtomValue *avp, char **hostname)
 					host, sizeof(host)) >= 0))) {
 	return avp->cp = *hostname = host;
     }
+#endif
 
     return avp->cp = *hostname = ctx_hostname(ctx, hostname);
 }
@@ -1604,6 +1646,9 @@ pmcd_fetch(int numpmid, pmID pmidlist[], pmResult **resp, pmdaExt *pmda)
 			    else
 				atom.l = agent[j].reason;
 			    break;
+			case 2:		/* agent.fenced */
+			    atom.ul = agent[j].status.fenced;
+			    break;
 			default:
 			    sts = atom.l = PM_ERR_PMID;
 			    break;
@@ -1791,12 +1836,13 @@ pmcd_desc(pmID pmid, pmDesc *desc, pmdaExt *pmda)
 static int
 pmcd_store(pmResult *result, pmdaExt *pmda)
 {
-    int		i, j, val;
+    int		i, j, k, val;
     int		sts = 0;
     int		ctx = pmda->e_context;
     char	*cp;
 
     for (i = 0; i < result->numpmid; i++) {
+	AgentInfo	*ap;
 	pmValueSet	*vsp;
 	unsigned int	cluster;
 	unsigned int	item;
@@ -1898,6 +1944,36 @@ pmcd_store(pmResult *result, pmdaExt *pmda)
 		break;
 	    }
 	}
+	else if (cluster == 4) {
+	    if (item == 2) { /* pmcd.agent.fenced */
+		if (ctx >= num_ctx)
+		    grow_ctxtab(ctx);
+		if (ctxtab[ctx].uid != 0) {
+		    sts = PM_ERR_PERMISSION;
+		    break;
+		}
+		for (j = 0; j < vsp->numval; j++) {
+		    val = vsp->vlist[j].value.lval;
+		    if (val != 0 && val != 1) {
+		        sts = PM_ERR_BADSTORE;
+			break;
+		    }
+		    if (vsp->vlist[j].inst == PM_IN_NULL) {
+			for (k = 0; k < nAgents; k++)
+			    if (agent[k].pmDomainId != pmda->e_domain)
+				agent[k].status.fenced = val;
+			continue;
+		    }
+		    ap = pmcd_agent(vsp->vlist[j].inst);
+		    if (ap == NULL) {
+			sts = PM_ERR_INST;
+			break;
+		    }
+		    if (ap->pmDomainId != pmda->e_domain)
+			ap->status.fenced = val;
+		}
+	    }
+	}
 	else if (cluster == 6) {
 	    if (item == 0 ||	/* pmcd.client.whoami */
 		item == 2) {	/* pmcd.client.container */
@@ -1952,6 +2028,8 @@ pmcd_attribute(int ctx, int attr, const char *value, int len, pmdaExt *pmda)
 {
     if (ctx >= num_ctx)
 	grow_ctxtab(ctx);
+    if (attr == PMDA_ATTR_USERID)
+	ctxtab[ctx].uid = atoi(value);
     if (attr == PMDA_ATTR_CONTAINER) {
 	char	*name = len > 1 ? strndup(value, len) : NULL;
 
@@ -1988,7 +2066,9 @@ pmcd_init(pmdaInterface *dp)
     dp->version.six.ext->e_endCallBack = end_context;
 
     init_tables(dp->domain);
+#ifndef IS_MINGW
     init_pmdaroot_connect();
+#endif
 
     pmdaInit(dp, NULL, 0, NULL, 0);
 }

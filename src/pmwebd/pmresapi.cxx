@@ -129,7 +129,7 @@ pmwebres_respond (struct MHD_Connection *connection, const http_params& params, 
     }
 
     // our ETag is simply a few stat numbers in decimal
-    pmsprintf(etag, sizeof(etag), "\"m%ldd%lui%lu\"", fds.st_mtime,
+    pmsprintf(etag, sizeof(etag), "\"m%ldd%lui%lu\"", (long)fds.st_mtime,
               (unsigned long)fds.st_dev, (unsigned long)fds.st_ino);
 
     // shortcut response with a 304 ("not modified") code if request header matches
@@ -141,6 +141,7 @@ pmwebres_respond (struct MHD_Connection *connection, const http_params& params, 
         if (! resp)
             return MHD_NO;
 
+        close (fd); // don't leak file fd
         resp_code = 304;
         goto out_304;
     }

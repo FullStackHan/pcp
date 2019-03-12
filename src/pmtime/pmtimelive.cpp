@@ -162,8 +162,10 @@ void PmTimeLive::displayPosition()
 {
     QString text;
     char ctimebuf[32], msecbuf[5];
+    time_t time;
 
-    pmCtime((const time_t *)&my.pmtime.position.tv_sec, ctimebuf);
+    time = my.pmtime.position.tv_sec;
+    pmCtime(&time, ctimebuf);
     text = tr(ctimebuf);
     if (my.showYear == false)
 	text.remove(19, 5);
@@ -298,8 +300,10 @@ void PmTimeLive::addTimezone(const char *string)
 	my.tzActions = new QActionGroup(this);
 	connect(my.tzActions, SIGNAL(triggered(QAction *)) , this,
 				SLOT(setTimezone(QAction *)));
+#if QT_VERSION < QT_VERSION_CHECK(5,0,0)
 	connect(my.tzActions, SIGNAL(selected(QAction *)) , this,
 				SLOT(setTimezone(QAction *)));
+#endif
     }
     my.tzActions->addAction(tzAction);
     optionsTimezoneAction->addActions(my.tzActions->actions());

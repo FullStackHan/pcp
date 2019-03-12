@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2013-2015 Red Hat.
+# Copyright (c) 2013-2015,2019 Red Hat.
 # Copyright (c) 2000-2008 Silicon Graphics, Inc.  All Rights Reserved.
 # 
 # This program is free software; you can redistribute it and/or modify it
@@ -43,7 +43,7 @@ PMCDENVS=$PCP_SYSCONFIG_DIR/pmcd
 RUNDIR=$PCP_LOG_DIR/pmcd
 prog=$PCP_RC_DIR/`basename $0`
 
-tmp=`mktemp -d /var/tmp/pcp.XXXXXXXXX` || exit 1
+tmp=`mktemp -d $PCP_DIR/var/tmp/pcp.XXXXXXXXX` || exit 1
 status=1
 trap "rm -rf $tmp; exit \$status" 0 1 2 3 15
 
@@ -173,6 +173,7 @@ _pmda_setup()
     then
 	here=`pwd`
 	cd "$PCP_PMDAS_DIR"
+	_pmda_prepare Upgrade
 	_pmda_enact Remove Removing
 	_pmda_enact Install Installing
 	cd "$here"
@@ -216,6 +217,28 @@ _pmda_enact()
     done
 }
 
+# Take automated corrective steps (Upgrade) for installed PMDAs
+#
+_pmda_prepare()
+{
+    action=$1
+
+    for file in */$action
+    do
+	[ "$file" = "*/$action" ] && break
+	pmda=`dirname $file`
+	if [ -d "$pmda" -a -f "$pmda/$action" ]
+	then
+	    cd $pmda
+	    if ! ./${action} </dev/null >/dev/null
+	    then
+		$PCP_BINADM_DIR/pmpost "PMDA setup: automated $action FAILED (exit=$?): $pmda"
+	    fi
+	    cd "$PCP_PMDAS_DIR"
+	fi
+    done
+}
+
 _start_pmcheck()
 {
     if [ ! -z "$PMCD_WAIT_TIMEOUT" ]
@@ -225,7 +248,20 @@ _start_pmcheck()
 	wait_option=''
     fi
 
-    if pmcd_wait $wait_option
+    # check to see if pmcd started with explicit Unix domain socket;
+    # if so, we'll wait on that interface.
+    #
+    if [ -z "$PMCD_SOCKET" ]
+    then
+	sock_option=`sed -n <$PMCDOPTS 2>/dev/null \
+			 -e '/^[^-]/d' \
+			 -e 's/  / /' \
+			 -e 's/^/ /' \
+			 -e 's/ -s *//gp'`
+	[ -n "$sock_option" ] && export PMCD_SOCKET="$sock_option"
+    fi
+
+    if $PCP_BINADM_DIR/pmcd_wait $wait_option
     then
 	:
     else

@@ -19,6 +19,7 @@
 #include <limits.h>
 #include <float.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 static struct pmTimeval	pmtv;
 static char		timebuf[32];	/* for pmCtime result + .xxx */
@@ -370,8 +371,10 @@ dump_result(pmResult *resp)
     if (xflag) {
 	char	       *ddmm;
 	char	       *yr;
+	time_t		time;
 
-	ddmm = pmCtime((const time_t *)&resp->timestamp.tv_sec, timebuf);
+	time = resp->timestamp.tv_sec;
+	ddmm = pmCtime(&time, timebuf);
 	ddmm[10] = '\0';
 	yr = &ddmm[20];
 	printf("%s ", ddmm);
@@ -813,11 +816,13 @@ dumpLabel(int verbose)
     char	*ddmm;
     char	*yr;
     pmTimeval	stamp;
+    time_t	time;
 
     printf("Log Label (Log Format Version %d)\n", label.ll_magic & 0xff);
     printf("Performance metrics from host %s\n", label.ll_hostname);
 
-    ddmm = pmCtime((const time_t *)&label.ll_start.tv_sec, timebuf);
+    time = label.ll_start.tv_sec;
+    ddmm = pmCtime(&time, timebuf);
     ddmm[10] = '\0';
     yr = &ddmm[20];
     printf("    commencing %s ", ddmm);
@@ -831,7 +836,8 @@ dumpLabel(int verbose)
 	printf("    ending     UNKNOWN\n");
     }
     else {
-	ddmm = pmCtime((const time_t *)&opts.finish.tv_sec, timebuf);
+	time = opts.finish.tv_sec;
+	ddmm = pmCtime(&time, timebuf);
 	ddmm[10] = '\0';
 	yr = &ddmm[20];
 	printf("    ending     %s ", ddmm);
@@ -856,7 +862,11 @@ rawdump(FILE *f)
     int		i;
     int		sts;
 
-    old = ftell(f);
+    if ((old = ftell(f)) < 0) {
+	fprintf(stderr, "rawdump: Botch: ftell(%p) -> %ld (%s)\n", f, old, pmErrStr(-errno));
+	return;
+    }
+
     fseek(f, (long)0, SEEK_SET);
 
     while ((sts = fread(&len, 1, sizeof(len), f)) == sizeof(len)) {

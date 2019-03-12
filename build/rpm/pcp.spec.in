@@ -2,15 +2,17 @@ Summary: System-level performance monitoring and performance management
 Name: @package_name@
 Version: @package_version@
 Release: @package_release@@package_sgirelease@
-License: GPLv2+ and LGPLv2.1+ and CC-BY
+License: GPLv2+ and LGPLv2+ and CC-BY
 URL: https://pcp.io
-Group: Applications/System
 Source: @package_name@-@package_version@.src.tar.gz
 BuildRoot: @build_root@
 Distribution: @package_distribution@
 BuildRequires: procps bison flex
 BuildRequires: ncurses-devel
 BuildRequires: readline-devel
+%if 0%{?rhel} > 7
+%global __requires_exclude ^perl-LDAP$
+%endif
 %if 0%{?fedora} >= 26 || 0%{?rhel} > 7
 %global __python2 python2
 %else
@@ -70,8 +72,8 @@ BuildRequires: initscripts man /bin/hostname
 %if "@pmda_rpm@" == "true"
 BuildRequires: rpm-devel
 %endif
-%if "@pmda_papi@" == "true"
-BuildRequires: papi-devel
+%if "@pmda_podman@" == "true"
+BuildRequires: libvarlink-devel
 %endif
 %if "@pmda_perfevent@" == "true"
 BuildRequires: libpfm-devel >= 4
@@ -92,8 +94,12 @@ Conflicts: pcp-pro < 2.2
 # prevent conflicting binary and man page install for pcp(1)
 Conflicts: librapi
 
+# KVM PMDA moved into pcp (no longer using Perl, default on)
+Obsoletes: pcp-pmda-kvm
+Provides: pcp-pmda-kvm
+
 # Utilities used indirectly e.g. by scripts we install
-Requires: bash gawk sed grep coreutils findutils
+Requires: bash xz gawk sed grep coreutils findutils
 # which(1) comes from different places
 %if 0%{?suse_version} >= 1100
 Requires: util-linux
@@ -143,21 +149,11 @@ Requires: initscripts
 if [ %1 -eq 0 ]
 then
     PCP_PMDAS_DIR=@pcp_pmdas_dir@
-    PCP_ETC_DIR=@pcp_etc_dir@
-    if [ -f "$PCP_ETC_DIR/pcp/pmcd/pmcd.conf" -a -f "$PCP_PMDAS_DIR/%2/domain.h" ]
+    PCP_PMCDCONF_PATH=@pcp_pmcdconf_path@
+    if [ -f "$PCP_PMCDCONF_PATH" -a -f "$PCP_PMDAS_DIR/%2/domain.h" ]
     then
 	(cd $PCP_PMDAS_DIR/%2/ && ./Remove >/dev/null 2>&1)
     fi
-fi
-}
-
-# force upgrade of PMDAs starting in "notready" state
-%global pmda_notready() %{expand:
-PCP_PMDAS_DIR=@pcp_pmdas_dir@
-PCP_ETC_DIR=@pcp_etc_dir@
-if grep -q ^%2 "$PCP_ETC_DIR/pcp/pmcd/pmcd.conf" 2>/dev/null
-then
-    touch $PCP_PMDAS_DIR/%2/.NeedInstall
 fi
 }
 
@@ -177,9 +173,10 @@ Requires: pcp-libs = @package_version@
 %if "@enable_selinux@" == "true"
 Requires: pcp-selinux = @package_version@
 %endif
-Obsoletes: pcp-compat
-%if 0%{?fedora} < 27
-# F27 re-introduced split-out debuginfo packages
+Obsoletes: pcp-compat pcp-collector pcp-monitor
+
+# Some older releases did not update or replace pcp-gui-debuginfo properly
+%if 0%{?fedora} < 27 && 0%{?rhel} <= 7 && "%{_vendor}" == "redhat"
 Obsoletes: pcp-gui-debuginfo
 %endif
 
@@ -195,8 +192,7 @@ applications to easily retrieve and process any subset of that data.
 # pcp-conf
 #
 %package conf
-License: LGPLv2.1+
-Group: System Environment/Libraries
+License: LGPLv2+
 Summary: Performance Co-Pilot run-time configuration
 URL: https://pcp.io
 
@@ -210,8 +206,7 @@ Performance Co-Pilot (PCP) run-time configuration
 # pcp-libs
 #
 %package libs
-License: LGPLv2.1+
-Group: System Environment/Libraries
+License: LGPLv2+
 Summary: Performance Co-Pilot run-time libraries
 URL: https://pcp.io
 Requires: pcp-conf = @package_version@
@@ -224,8 +219,7 @@ Performance Co-Pilot (PCP) run-time libraries
 # pcp-libs-devel
 #
 %package libs-devel
-License: GPLv2+ and LGPLv2.1+
-Group: Development/Libraries
+License: GPLv2+ and LGPLv2+
 Summary: Performance Co-Pilot (PCP) development headers
 URL: https://pcp.io
 
@@ -236,8 +230,7 @@ Performance Co-Pilot (PCP) headers for development.
 # pcp-devel
 #
 %package devel
-License: GPLv2+ and LGPLv2.1+
-Group: Development/Libraries
+License: GPLv2+ and LGPLv2+
 Summary: Performance Co-Pilot (PCP) development tools and documentation
 URL: https://pcp.io
 Requires: pcp = @package_version@
@@ -252,7 +245,6 @@ Performance Co-Pilot (PCP) documentation and tools for development.
 #
 %package testsuite
 License: GPLv2+
-Group: Development/Libraries
 Summary: Performance Co-Pilot (PCP) test suite
 URL: https://pcp.io
 Requires: pcp = @package_version@
@@ -260,1722 +252,22 @@ Requires: pcp-libs = @package_version@
 Requires: pcp-libs-devel = @package_version@
 Requires: pcp-devel = @package_version@
 Obsoletes: pcp-gui-testsuite
-
-%description testsuite
-Quality assurance test suite for Performance Co-Pilot (PCP).
-
-%if "@enable_manager@" == "true"
-#
-# pcp-manager
-#
-%package manager
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) manager daemon
-URL: https://pcp.io
-Requires: pcp = @package_version@ pcp-libs = @package_version@
-
-%description manager
-An optional daemon (pmmgr) that manages a collection of pmlogger and
-pmie daemons, for a set of discovered local and remote hosts running
-the performance metrics collection daemon (pmcd).  It ensures these
-daemons are running when appropriate, and manages their log rotation
-needs.  It is an alternative to the cron-based pmlogger/pmie service
-scripts.
-%endif
-
-%if "@enable_webapi@" == "true"
-#
-# pcp-webapi
-#
-%package webapi
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) web API service
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%if !%{disable_boost}
-BuildRequires: boost-devel
-%endif
-
-%description webapi
-Provides a daemon (pmwebd) that binds a large subset of the Performance
-Co-Pilot (PCP) client API (PMAPI) to RESTful web applications using the
-HTTP (PMWEBAPI) protocol.
-%endif
-
-%if "@have_webapps@" == "true"
-#
-# pcp-webjs
-#
-%package webjs
-License: ASL 2.0 and MIT and CC-BY
-Group: Applications/Internet
-%if @rpm_version@ >= 4060000
-BuildArch: noarch
-%endif
-Requires: pcp-webapp-vector pcp-webapp-blinkenlights
-Requires: pcp-webapp-grafana pcp-webapp-graphite
-Summary: Performance Co-Pilot (PCP) web applications
-URL: https://pcp.io
-
-%description webjs
-Javascript web application content for the Performance Co-Pilot (PCP)
-web service.
-
-%package webapp-vector
-License: ASL 2.0
-Group: Applications/Internet
-%if 0%{?rhel} == 0 || 0%{?rhel} > 5
-BuildArch: noarch
-%endif
-Summary: Vector web application for Performance Co-Pilot (PCP)
-URL: https://github.com/Netflix/vector
-
-%description webapp-vector
-Vector web application for the Performance Co-Pilot (PCP).
-
-%package webapp-grafana
-License: ASL 2.0
-Group: Applications/Internet
-Conflicts: pcp-webjs < 3.10.4
-%if 0%{?rhel} == 0 || 0%{?rhel} > 5
-BuildArch: noarch
-%endif
-Summary: Grafana web application for Performance Co-Pilot (PCP)
-URL: https://grafana.org
-
-%description webapp-grafana
-Grafana is an open source, feature rich metrics dashboard and graph
-editor.  This package provides a Grafana that uses the Performance
-Co-Pilot (PCP) as the data repository.  Other Grafana backends are
-not used.
-
-Grafana can render time series dashboards at the browser via flot.js
-(more interactive, slower, for beefy browsers) or alternately at the
-server via png (less interactive, faster).
-
-%package webapp-graphite
-License: ASL 2.0
-Group: Applications/Internet
-Conflicts: pcp-webjs < 3.10.4
-%if 0%{?rhel} == 0 || 0%{?rhel} > 5
-BuildArch: noarch
-%endif
-Summary: Graphite web application for Performance Co-Pilot (PCP)
-URL: http://graphite.readthedocs.org
-
-%description webapp-graphite
-Graphite is a highly scalable real-time graphing system. This package
-provides a graphite version that uses the Performance Co-Pilot (PCP)
-as the data repository, and Graphites web interface renders it. The
-Carbon and Whisper subsystems of Graphite are not included nor used.
-
-%package webapp-blinkenlights
-License: ASL 2.0
-Group: Applications/Internet
-Conflicts: pcp-webjs < 3.11.9
-%if 0%{?rhel} == 0 || 0%{?rhel} > 5
-BuildArch: noarch
-%endif
-Summary: Blinking lights web application for Performance Co-Pilot (PCP)
-URL: https://pcp.io
-
-%description webapp-blinkenlights
-Demo web application showing traffic lights that change colour based
-on the periodic evaluation of performance metric expressions.
-%endif
-
-#
-# perl-PCP-PMDA. This is the PCP agent perl binding.
-#
-%package -n perl-PCP-PMDA
-License: GPLv2+
-Group: Development/Libraries
-Summary: Performance Co-Pilot (PCP) Perl bindings and documentation
-URL: https://pcp.io
-BuildRequires: perl(ExtUtils::MakeMaker)
-Requires: pcp-libs = @package_version@
-Requires: %{perl_interpreter}
-
-%description -n perl-PCP-PMDA
-The PCP::PMDA Perl module contains the language bindings for
-building Performance Metric Domain Agents (PMDAs) using Perl.
-Each PMDA exports performance data for one specific domain, for
-example the operating system kernel, Cisco routers, a database,
-an application, etc.
-
-#
-# perl-PCP-MMV
-#
-%package -n perl-PCP-MMV
-License: GPLv2+
-Group: Development/Libraries
-Summary: Performance Co-Pilot (PCP) Perl bindings for PCP Memory Mapped Values
-URL: https://pcp.io
-Requires: pcp = @package_version@
-Requires: %{perl_interpreter}
-
-%description -n perl-PCP-MMV
-The PCP::MMV module contains the Perl language bindings for
-building scripts instrumented with the Performance Co-Pilot
-(PCP) Memory Mapped Value (MMV) mechanism.
-This mechanism allows arbitrary values to be exported from an
-instrumented script into the PCP infrastructure for monitoring
-and analysis with pmchart, pmie, pmlogger and other PCP tools.
-
-#
-# perl-PCP-LogImport
-#
-%package -n perl-PCP-LogImport
-License: GPLv2+
-Group: Development/Libraries
-Summary: Performance Co-Pilot (PCP) Perl bindings for importing external data into PCP archives
-URL: https://pcp.io
-Requires: pcp = @package_version@
-Requires: %{perl_interpreter}
-
-%description -n perl-PCP-LogImport
-The PCP::LogImport module contains the Perl language bindings for
-importing data in various 3rd party formats into PCP archives so
-they can be replayed with standard PCP monitoring tools.
-
-#
-# perl-PCP-LogSummary
-#
-%package -n perl-PCP-LogSummary
-License: GPLv2+
-Group: Development/Libraries
-Summary: Performance Co-Pilot (PCP) Perl bindings for post-processing output of pmlogsummary
-URL: https://pcp.io
-Requires: pcp = @package_version@
-Requires: %{perl_interpreter}
-
-%description -n perl-PCP-LogSummary
-The PCP::LogSummary module provides a Perl module for using the
-statistical summary data produced by the Performance Co-Pilot
-pmlogsummary utility.  This utility produces various averages,
-minima, maxima, and other calculations based on the performance
-data stored in a PCP archive.  The Perl interface is ideal for
-exporting this data into third-party tools (e.g. spreadsheets).
-
-#
-# pcp-import-sar2pcp
-#
-%package import-sar2pcp
-License: LGPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for importing sar data into PCP archive logs
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
-%if "%{_vendor}" == "suse"
-%else
-Requires: perl(XML::TokeParser)
-%endif
-
-
-%description import-sar2pcp
-Performance Co-Pilot (PCP) front-end tools for importing sar data
-into standard PCP archive logs for replay with any PCP monitoring tool.
-
-#
-# pcp-import-iostat2pcp
-#
-%package import-iostat2pcp
-License: LGPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for importing iostat data into PCP archive logs
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
-
-%description import-iostat2pcp
-Performance Co-Pilot (PCP) front-end tools for importing iostat data
-into standard PCP archive logs for replay with any PCP monitoring tool.
-
-#
-# pcp-import-sheet2pcp
-#
-%package import-sheet2pcp
-License: LGPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for importing spreadsheet data into PCP archive logs
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
-%if "%{_vendor}" == "suse"
-%else
-Requires: perl(XML::TokeParser)
-%endif
-
-%description import-sheet2pcp
-Performance Co-Pilot (PCP) front-end tools for importing spreadsheet data
-into standard PCP archive logs for replay with any PCP monitoring tool.
-
-#
-# pcp-import-mrtg2pcp
-#
-%package import-mrtg2pcp
-License: LGPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for importing MTRG data into PCP archive logs
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
-
-%description import-mrtg2pcp
-Performance Co-Pilot (PCP) front-end tools for importing MTRG data
-into standard PCP archive logs for replay with any PCP monitoring tool.
-
-#
-# pcp-import-ganglia2pcp
-#
-%package import-ganglia2pcp
-License: LGPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for importing ganglia data into PCP archive logs
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
-
-%description import-ganglia2pcp
-Performance Co-Pilot (PCP) front-end tools for importing ganglia data
-into standard PCP archive logs for replay with any PCP monitoring tool.
-
-#
-# pcp-import-collectl2pcp
-#
-%package import-collectl2pcp
-License: LGPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for importing collectl log files into PCP archive logs
-URL: https://pcp.io
-Requires: pcp-libs = %{version}-%{release}
-
-%description import-collectl2pcp
-Performance Co-Pilot (PCP) front-end tools for importing collectl data
-into standard PCP archive logs for replay with any PCP monitoring tool.
-
-#
-# pcp-export-zabbix-agent
-#
-%package export-zabbix-agent
-License: GPLv2+
-Group: Applications/System
-Summary: Module for exporting PCP metrics to Zabbix agent
-URL: https://pcp.io
-Requires: pcp-libs = %{version}-%{release}
-
-%description export-zabbix-agent
-Performance Co-Pilot (PCP) module for exporting metrics from PCP to
-Zabbix via the Zabbix agent - see zbxpcp(3) for further details.
-
-%if "@pcp2elasticsearch@" == "true"
-#
-# pcp-export-pcp2elasticsearch
-#
-%package export-pcp2elasticsearch
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for exporting PCP metrics to ElasticSearch
-URL: https://pcp.io
-Requires: pcp-libs >= %{version}-%{release}
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-Requires: python3-elasticsearch
-%else
-Requires: %{__python2}-pcp = @package_version@
-Requires: %{__python2}-elasticsearch
-%endif
-
-%description export-pcp2elasticsearch
-Performance Co-Pilot (PCP) front-end tools for exporting metric values
-to Elasticsearch - a distributed, RESTful search and analytics engine.
-See https://www.elastic.co/community for further details.
-%endif
-
-%if "@have_python@" == "true"
-#
-# pcp-export-pcp2graphite
-#
-%package export-pcp2graphite
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for exporting PCP metrics to Graphite
-URL: https://pcp.io
-Requires: pcp-libs >= %{version}-%{release}
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-%else
-Requires: %{__python2}-pcp = @package_version@
-%endif
-
-%description export-pcp2graphite
-Performance Co-Pilot (PCP) front-end tools for exporting metric values
-to graphite (http://graphite.readthedocs.org).
-
-#
-# pcp-export-pcp2influxdb
-#
-%package export-pcp2influxdb
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for exporting PCP metrics to InfluxDB
-URL: https://pcp.io
-Requires: pcp-libs >= %{version}-%{release}
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-Requires: python3-requests
-%else
-Requires: %{__python2}-pcp = @package_version@
-Requires: %{__python2}-requests
-%endif
-
-%description export-pcp2influxdb
-Performance Co-Pilot (PCP) front-end tools for exporting metric values
-to InfluxDB (https://influxdata.com/time-series-platform/influxdb).
-
-#
-# pcp-export-pcp2json
-#
-%package export-pcp2json
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for exporting PCP metrics in JSON format
-URL: https://pcp.io
-Requires: pcp-libs >= %{version}-%{release}
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-%else
-Requires: %{__python2}-pcp = @package_version@
-%endif
-
-%description export-pcp2json
-Performance Co-Pilot (PCP) front-end tools for exporting metric values
-in JSON format.
-
-#
-# pcp-export-pcp2xml
-#
-%package export-pcp2xml
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for exporting PCP metrics in XML format
-URL: https://pcp.io
-Requires: pcp-libs >= %{version}-%{release}
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-%else
-Requires: %{__python2}-pcp = @package_version@
-%endif
-
-%description export-pcp2xml
-Performance Co-Pilot (PCP) front-end tools for exporting metric values
-in XML format.
-
-#
-# pcp-export-pcp2zabbix
-#
-%package export-pcp2zabbix
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for exporting PCP metrics to Zabbix
-URL: https://pcp.io
-Requires: pcp-libs >= %{version}-%{release}
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-%else
-Requires: %{__python2}-pcp = @package_version@
-%endif
-
-%description export-pcp2zabbix
-Performance Co-Pilot (PCP) front-end tools for exporting metric values
-to the Zabbix (https://www.zabbix.org/) monitoring software.
-%endif
-
-%if "@pcp2xlsx@" == "true"
-#
-# pcp-export-pcp2xlsx
-#
-%package export-pcp2xlsx
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot tools for exporting PCP metrics to Excel
-URL: https://pcp.io
-Requires: pcp-libs >= %{version}-%{release}
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-Requires: python3-openpyxl
-%else
-Requires: %{__python2}-pcp = @package_version@
-Requires: %{__python2}-openpyxl
-%endif
-
-%description export-pcp2xlsx
-Performance Co-Pilot (PCP) front-end tools for exporting metric values
-in Excel spreadsheet format.
-%endif
-
-%if "@enable_python2@" == "true"
-#
-# python2-pcp. This is the PCP library bindings for python.
-#
-%package -n %{__python2}-pcp
-License: GPLv2+
-Group: Development/Libraries
-Summary: Performance Co-Pilot (PCP) Python bindings and documentation
-URL: https://pcp.io
-BuildRequires: %{__python2}-devel
-%if 0%{?fedora} >= 26 || 0%{?rhel} > 7
-# on these platforms, python2-pcp replaces python-pcp
-Obsoletes: python-pcp
-%endif
-%if "%{_vendor}" == "redhat" && 0%{?rhel} <= 5 && 0%{?fedora} <= 25
-Requires: %{__python2}-ctypes
-%endif
-Requires: pcp-libs = @package_version@
-Requires: %{__python2}
-
-%description -n %{__python2}-pcp
-This python PCP module contains the language bindings for
-Performance Metric API (PMAPI) monitor tools and Performance
-Metric Domain Agents (PMDA) collector tools written in Python.
-%endif
-
-%if "@enable_python3@" == "true"
-#
-# python3-pcp. This is the PCP library bindings for python.
-#
-%package -n python3-pcp
-License: GPLv2+
-Group: Development/Libraries
-Summary: Performance Co-Pilot (PCP) Python3 bindings and documentation
-URL: https://pcp.io
-BuildRequires: python3-devel
-Requires: pcp-libs = @package_version@
-Requires: python3
-
-%description -n python3-pcp
-This python PCP module contains the language bindings for
-Performance Metric API (PMAPI) monitor tools and Performance
-Metric Domain Agent (PMDA) collector tools written in Python3.
-%endif
-
-%if "@have_python@" == "true"
-#
-# pcp-system-tools
-#
-%package system-tools
-License: GPLv2+
-Group: Development/Libraries
-Summary: Performance Co-Pilot (PCP) System and Monitoring Tools
-URL: https://pcp.io
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-%else
-Requires: %{__python2}-pcp = @package_version@
-%endif
-
-%description system-tools
-This PCP module contains additional system monitoring tools written
-in the Python language.
-%endif #pcp-system-tools
-
-%if "@enable_qt@" == "true"
-#
-# pcp-gui package for Qt tools
-#
-%package gui
-License: GPLv2+ and LGPLv2+ and LGPLv2+ with exceptions
-Group: Applications/System
-Summary: Visualization tools for the Performance Co-Pilot toolkit
-URL: https://pcp.io
-Requires: pcp-libs = %{version}-%{release}
-
-%description gui
-Visualization tools for the Performance Co-Pilot toolkit.
-The pcp-gui package primarily includes visualization tools for
-monitoring systems using live and archived Performance Co-Pilot
-(PCP) sources.
-%endif
-
-#
-# pcp-doc package
-#
-%package doc
-License: GPLv2+ and CC-BY
-Group: Documentation
-# BuildArch: requires rpm 4.6 or later ... ./get_rpm_vesion maps version
-# 4.6.2.3 to the 7-digit "number" 4060203
-%if @rpm_version@ >= 4060000
-BuildArch: noarch
-%endif
-Summary: Documentation and tutorial for the Performance Co-Pilot
-URL: https://pcp.io
-
-%description doc
-Documentation and tutorial for the Performance Co-Pilot
-Performance Co-Pilot (PCP) provides a framework and services to support
-system-level performance monitoring and performance management.
-
-The pcp-doc package provides useful information on using and
-configuring the Performance Co-Pilot (PCP) toolkit for system
-level performance management.  It includes tutorials, HOWTOs,
-and other detailed documentation about the internals of core
-PCP utilities and daemons, and the PCP graphical tools.
-
-#
-# pcp-selinux package
-#
-%if "@enable_selinux@" == "true"
-%package selinux
-License: GPLv2+ and CC-BY
-Group: Applications/System
-Summary: Selinux policy package
-URL: https://pcp.io
-BuildRequires: selinux-policy-devel
-BuildRequires: selinux-policy-targeted
-%if 0%{?fedora} >= 19 || 0%{?rhel} >= 6 || 0%{?suse_version} >= 1200
-BuildRequires: setools-console
-%else
-BuildRequires: setools
-%endif
-Requires: policycoreutils
-%if "%{_vendor}" == "suse"
-# no libsemanage for SuSE other than libsemanage1 for OpenSuSE 12
-%if 0%{?suse_version} >= 1200
-Requires: libsemanage1
-%endif
-%else
-Requires: libsemanage
-%endif
-
-%description selinux
-This package contains SELinux support for PCP.  The package contains
-interface rules, type enforcement and file context adjustments for an
-updated policy package.
-%endif
-
-%if "@pmda_papi@" == "true"
-#
-# pcp-pmda-papi
-#
-%package pmda-papi
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Performance API and hardware counters
-URL: https://pcp.io
-Requires: pcp-libs = %{version}-%{release}
-BuildRequires: papi-devel
-
-%description pmda-papi
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting hardware counters statistics through PAPI (Perforamance API).
-#end pcp-pmda-papi
-%endif
-
-%if "@pmda_infiniband@" == "true"
-#
-# pcp-pmda-infiniband
-#
-%package pmda-infiniband
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Infiniband HCAs and switches
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%if "%{_vendor}" == "suse"
-%if 0%{suse_version} >= 1110
-Requires: libibmad5 >= 1.1.7 libibumad3 >= 1.1.7
-%else
-Requires: libibmad1 >= 1.1.7 libibumad1 >= 1.1.7
-%endif
-%else
-Requires: libibmad >= 1.1.7 libibumad >= 1.1.7
-%endif
-BuildRequires: libibmad-devel >= 1.1.7 libibumad-devel >= 1.1.7
-
-%description pmda-infiniband
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting Infiniband statistics.  By default, it monitors the local HCAs
-but can also be configured to monitor remote GUIDs such as IB switches.
-#end pcp-pmda-infiniband
-%endif
-
-%if "@pmda_perfevent@" == "true"
-#
-# pcp-pmda-perfevent
-#
-%package pmda-perfevent
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for hardware counters
-URL: https://pcp.io
-%if "%{_vendor}" == "suse"
-Requires: libpfm4 >= 4.4
-%else
-Requires: libpfm >= 4.4
-%endif
-BuildRequires: libpfm-devel >= 4.4
-
-%description pmda-perfevent
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting hardware counters statistics through libpfm.
-#end pcp-pmda-perfevent
-%endif
-
-%if "@pmda_activemq@" == "true"
-#
-# pcp-pmda-activemq
-#
-%package pmda-activemq
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for ActiveMQ
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(LWP::UserAgent)
-
-%description pmda-activemq
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the ActiveMQ message broker.
-#end pcp-pmda-activemq
-%endif
-
-%if "@pmda_bind2@" == "true"
-#
-# pcp-pmda-bind2
-#
-%package pmda-bind2
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for BIND servers
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(LWP::UserAgent)
-Requires: perl(XML::LibXML)
-Requires: perl(File::Slurp)
-
-%description pmda-bind2
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics from BIND (Berkeley Internet Name Domain).
-#end pcp-pmda-bind2
-%endif
-
-#
-# pcp-pmda-redis
-#
-%package pmda-redis
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Redis
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-redis
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics from Redis servers (redis.io).
-#end pcp-pmda-redis
-
-%if "@pmda_nutcracker@" == "true"
-#
-# pcp-pmda-nutcracker
-#
-%package pmda-nutcracker
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for NutCracker (TwemCache)
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(YAML::XS::LibYAML)
-Requires: perl(JSON)
-
-%description pmda-nutcracker
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics from NutCracker (TwemCache).
-#end pcp-pmda-nutcracker
-%endif
-
-#
-# pcp-pmda-bonding
-#
-%package pmda-bonding
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Bonded network interfaces
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-bonding
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about bonded network interfaces.
-#end pcp-pmda-bonding
-
-#
-# pcp-pmda-dbping
-#
-%package pmda-dbping
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Database response times and Availablility
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-dbping
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Database response times and Availablility.
-#end pcp-pmda-dbping
-
-#
-# pcp-pmda-ds389
-#
-%package pmda-ds389
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for 389 Directory Servers
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-%if "%{_vendor}" == "suse"
-Requires: perl-ldap
-%else
-Requires: perl-LDAP
-%endif
-
-%description pmda-ds389
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about a 389 Directory Server.
-#end pcp-pmda-ds389
-
-#
-# pcp-pmda-ds389log
-#
-%package pmda-ds389log
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for 389 Directory Server Loggers
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl-Date-Manip
-
-%description pmda-ds389log
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics from a 389 Directory Server log.
-#end pcp-pmda-ds389log
-
-%if "@pmda_elasticsearch@" == "true"
-#
-# pcp-pmda-elasticsearch
-#
-%package pmda-elasticsearch
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Elasticsearch
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(LWP::UserAgent)
-
-%description pmda-elasticsearch
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Elasticsearch.
-#end pcp-pmda-elasticsearch
-%endif
-
-#
-# pcp-pmda-gpfs
-#
-%package pmda-gpfs
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for GPFS Filesystem
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-gpfs
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the GPFS filesystem.
-#end pcp-pmda-gpfs
-
-#
-# pcp-pmda-gpsd
-#
-%package pmda-gpsd
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for a GPS Daemon
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-gpsd
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about a GPS Daemon.
-#end pcp-pmda-gpsd
-
-#
-# pcp-pmda-kvm
-#
-%package pmda-kvm
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for KVM
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-kvm
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Kernel based Virtual Machine.
-#end pcp-pmda-kvm
-
-#
-# pcp-pmda-docker
-#
-%package pmda-docker
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics from the Docker daemon
-URL: https://pcp.io
-
-%description pmda-docker
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics using the Docker daemon REST API.
-#end pcp-pmda-docker
-
-#
-# pcp-pmda-lustre
-#
-%package pmda-lustre
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Lustre Filesytem
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-lustre
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Lustre Filesystem.
-#end pcp-pmda-lustre
-
-#
-# pcp-pmda-lustrecomm
-#
-%package pmda-lustrecomm
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Lustre Filesytem Comms
-URL: https://pcp.io
-
-%description pmda-lustrecomm
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Lustre Filesystem Comms.
-#end pcp-pmda-lustrecomm
-
-#
-# pcp-pmda-memcache
-#
-%package pmda-memcache
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Memcached
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-memcache
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Memcached.
-#end pcp-pmda-memcache
-
-%if "@pmda_mysql@" == "true"
-#
-# pcp-pmda-mysql
-#
-%package pmda-mysql
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for MySQL
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(DBI)
-Requires: perl(DBD::mysql)
-
-%description pmda-mysql
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the MySQL database.
-#end pcp-pmda-mysql
-%endif
-
-#
-# pcp-pmda-named
-#
-%package pmda-named
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Named
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-named
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Named nameserver.
-#end pcp-pmda-named
-
-# pcp-pmda-netfilter
-#
-%package pmda-netfilter
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Netfilter framework
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-netfilter
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Netfilter packet filtering framework.
-#end pcp-pmda-netfilter
-
-#
-# pcp-pmda-news
-#
-%package pmda-news
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Usenet News
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-news
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Usenet News.
-#end pcp-pmda-news
-
-%if "@pmda_nginx@" == "true"
-#
-# pcp-pmda-nginx
-#
-%package pmda-nginx
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Nginx Webserver
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(LWP::UserAgent)
-
-%description pmda-nginx
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Nginx Webserver.
-#end pcp-pmda-nginx
-%endif
-
-#
-# pcp-pmda-nfsclient
-#
-%package pmda-nfsclient
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for NFS Clients
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-nfsclient
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics for NFS Clients.
-#end pcp-pmda-nfsclient
-
-%if "@pmda_oracle@" == "true"
-#
-# pcp-pmda-oracle
-#
-%package pmda-oracle
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Oracle database
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(DBI)
-
-%description pmda-oracle
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Oracle database.
-#end pcp-pmda-oracle
-%endif
-
-#
-# pcp-pmda-pdns
-#
-%package pmda-pdns
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for PowerDNS
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-pdns
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the PowerDNS.
-#end pcp-pmda-pdns
-
-%if "@pmda_postfix@" == "true"
-#
-# pcp-pmda-postfix
-#
-%package pmda-postfix
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Postfix (MTA)
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-%if 0%{?fedora} > 16 || 0%{?rhel} > 5
-Requires: postfix-perl-scripts
-%endif
-%if 0%{?rhel} <= 5
-Requires: postfix
-%endif
-%if "%{_vendor}" == "suse"
-Requires: postfix-doc
-%endif
-
-%description pmda-postfix
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Postfix (MTA).
-#end pcp-pmda-postfix
-%endif
-
-%if "@pmda_postgresql@" == "true"
-#
-# pcp-pmda-postgresql
-#
-%package pmda-postgresql
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for PostgreSQL
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(DBI)
-Requires: perl(DBD::Pg)
-
-%description pmda-postgresql
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the PostgreSQL database.
-#end pcp-pmda-postgresql
-%endif
-
-#
-# pcp-pmda-rsyslog
-#
-%package pmda-rsyslog
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Rsyslog
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-rsyslog
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Rsyslog.
-#end pcp-pmda-rsyslog
-
-#
-# pcp-pmda-samba
-#
-%package pmda-samba
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Samba
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-samba
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Samba.
-#end pcp-pmda-samba
-
-#
-# pcp-pmda-slurm
-#
-%package pmda-slurm
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for NFS Clients
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-slurm
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics from the SLURM Workload Manager.
-#end pcp-pmda-slurm
-
-%if "@pmda_snmp@" == "true"
-#
-# pcp-pmda-snmp
-#
-%package pmda-snmp
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Simple Network Management Protocol
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-Requires: perl(Net::SNMP)
-
-%description pmda-snmp
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about SNMP.
-#end pcp-pmda-snmp
-%endif
-
-#
-# pcp-pmda-vmware
-#
-%package pmda-vmware
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for VMware
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-vmware
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics for VMware.
-#end pcp-pmda-vmware
-
-#
-# pcp-pmda-zimbra
-#
-%package pmda-zimbra
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Zimbra
-URL: https://pcp.io
-Requires: perl-PCP-PMDA = @package_version@
-
-%description pmda-zimbra
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Zimbra.
-#end pcp-pmda-zimbra
-
-#
-# pcp-pmda-dm
-#
-%package pmda-dm
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Device Mapper Cache and Thin Client
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-dm
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Device Mapper Cache and Thin Client.
-# end pcp-pmda-dm
-
-%if "@pmda_bcc@" == "true"
-#
-# pcp-pmda-bcc
-#
-%package pmda-bcc
-License: ASL 2.0 and GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics from eBPF/BCC modules
-URL: https://pcp.io
-Requires: python3-bcc
-Requires: python3-pcp
-%description pmda-bcc
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-extracting performance metrics from eBPF/BCC Python modules.
-# end pcp-pmda-bcc
-%endif
-
-%if "@have_python@" == "true"
-#
-# pcp-pmda-gluster
-#
-%package pmda-gluster
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Gluster filesystem
-URL: https://pcp.io
-%if "@enable_python3@" == "true"
-Requires: python3-pcp
-%else
-Requires: %{__python2}-pcp
-%endif
-%description pmda-gluster
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the gluster filesystem.
-# end pcp-pmda-gluster
-
-#
-# pcp-pmda-zswap
-#
-%package pmda-zswap
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for compressed swap
-URL: https://pcp.io
-%if "@enable_python3@" == "true"
-Requires: python3-pcp
-%else
-Requires: %{__python2}-pcp
-%endif
-%description pmda-zswap
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about compressed swap.
-# end pcp-pmda-zswap
-
-#
-# pcp-pmda-unbound
-#
-%package pmda-unbound
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Unbound DNS Resolver
-URL: https://pcp.io
-%if "@enable_python3@" == "true"
-Requires: python3-pcp
-%else
-Requires: %{__python2}-pcp
-%endif
-%description pmda-unbound
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Unbound DNS Resolver.
-# end pcp-pmda-unbound
-
-#
-# pcp-pmda-mic
-#
-%package pmda-mic
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Intel MIC cards
-URL: https://pcp.io
-%if "@enable_python3@" == "true"
-Requires: python3-pcp
-%else
-Requires: %{__python2}-pcp
-%endif
-%description pmda-mic
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Intel MIC cards.
-# end pcp-pmda-mic
-
-#
-# pcp-pmda-haproxy
-#
-%package pmda-haproxy
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for HAProxy
-URL: https://pcp.io
-%if "@enable_python3@" == "true"
-Requires: python3-pcp
-%else
-Requires: %{__python2}-pcp
-%endif
-%description pmda-haproxy
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-extracting performance metrics from HAProxy over the HAProxy stats socket.
-# end pcp-pmda-haproxy
-
-%endif
-
-%if "@pmda_libvirt@" == "true"
-#
-# pcp-pmda-libvirt
-#
-%package pmda-libvirt
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics from virtual machines
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%if "@enable_python3@" == "true"
-Requires: python3-pcp
-%if "%{_vendor}" == "suse"
-Requires: libvirt-python %{__python2}-lxml
-%else
-Requires: libvirt-python3 python3-lxml
-%endif
-%else
-Requires: %{__python2}-pcp
-Requires: %{__python2}-lxml
-# it appears the rpm name changed from libvirt-python to python-libvirt in
-# Fedora 27
-%if 0%{?fedora} >= 27
-Requires: %{__python2}-libvirt
-%else
-Requires: libvirt-python
-%endif
-%endif
-
-%description pmda-libvirt
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-extracting virtualisation statistics from libvirt about behaviour of guest
-and hypervisor machines.
-#end pcp-pmda-libvirt
-%endif
-
-%if "@pmda_lio@" == "true"
-#
-# pcp-pmda-lio
-#
-%package pmda-lio
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the LIO subsystem
-URL: https://pcp.io
-%if "@enable_python3@" == "true"
-Requires: python3-pcp
-Requires: python3-rtslib
-%else
-Requires: %{__python2}-rtslib
-Requires: %{__python2}-pcp
-%endif
-%description pmda-lio
-This package provides a PMDA to gather performance metrics from the kernels
-iSCSI target interface (LIO). The metrics are stored by LIO within the Linux
-kernels configfs filesystem. The PMDA provides per LUN level stats, and a
-summary instance per iSCSI target, which aggregates all LUN metrics within the
-target.
-#end pcp-pmda-lio
-%endif
-
-%if "@pmda_prometheus@" == "true"
-#
-# pcp-pmda-prometheus
-#
-%package pmda-prometheus
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics from Prometheus endpoints
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%if "@enable_python3@" == "true"
-Requires: python3-pcp = @package_version@
-Requires: python3-requests
-%else
-Requires: %{__python2}-pcp = @package_version@
-Requires: %{__python2}-requests
-%endif
-
-%description pmda-prometheus
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-extracting statistics from programs instrumented as Prometheus endpoints.
-#end pcp-pmda-prometheus
-%endif
-
-%if "@pmda_json@" == "true"
-#
-# pcp-pmda-json
-#
-%package pmda-json
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for JSON data
-URL: https://pcp.io
-%if "@enable_python3@" == "true"
-Requires: python3-pcp
-%if "%{_vendor}" == "suse"
-Requires: %{__python2}-jsonpointer
-%else
-Requires: python3-jsonpointer
-%endif
-Requires: python3-six
-%else
-Requires: %{__python2}-pcp
-Requires: %{__python2}-jsonpointer
-Requires: %{__python2}-six
-%endif
-%description pmda-json
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics output in JSON.
-# end pcp-pmda-json
-%endif
-
-#
-# C pmdas
-# pcp-pmda-apache
-#
-%package pmda-apache
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Apache webserver
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-apache
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Apache webserver.
-# end pcp-pmda-apache
-
-#
-# pcp-pmda-bash
-#
-%package pmda-bash
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Bash shell
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-bash
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Bash shell.
-# end pcp-pmda-bash
-
-#
-# pcp-pmda-cifs
-#
-%package pmda-cifs
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the CIFS protocol
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-cifs
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Common Internet Filesytem.
-# end pcp-pmda-cifs
-
-#
-# pcp-pmda-cisco
-#
-%package pmda-cisco
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Cisco routers
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-cisco
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Cisco routers.
-# end pcp-pmda-cisco
-
-#
-# pcp-pmda-gfs2
-#
-%package pmda-gfs2
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the GFS2 filesystem
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-gfs2
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Global Filesystem v2.
-# end pcp-pmda-gfs2
-
-#
-# pcp-pmda-lmsensors
-#
-%package pmda-lmsensors
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for hardware sensors
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-lmsensors
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the Linux hardware monitoring sensors.
-# end pcp-pmda-lmsensors
-
-#
-# pcp-pmda-logger
-#
-%package pmda-logger
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics from arbitrary log files
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-logger
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics from a specified set of log files (or pipes).  The PMDA
-supports both sampled and event-style metrics.
-# end pcp-pmda-logger
-
-#
-# pcp-pmda-mailq
-#
-%package pmda-mailq
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the sendmail queue
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-mailq
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about email queues managed by sendmail.
-# end pcp-pmda-mailq
-
-#
-# pcp-pmda-mounts
-#
-%package pmda-mounts
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for filesystem mounts
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-mounts
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about filesystem mounts.
-# end pcp-pmda-mounts
-
-#
-# pcp-pmda-nvidia-gpu
-#
-%package pmda-nvidia-gpu
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the Nvidia GPU
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-nvidia-gpu
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Nvidia GPUs.
-# end pcp-pmda-nvidia-gpu
-
-#
-# pcp-pmda-roomtemp
-#
-%package pmda-roomtemp
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the room temperature
-URL: https://pcp.io
-Requires: pcp = @package_version@
-%description pmda-roomtemp
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the room temperature.
-# end pcp-pmda-roomtemp
-
-%if "@pmda_rpm@" == "true"
-#
-# pcp-pmda-rpm
-#
-%package pmda-rpm
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for the RPM package manager
-URL: https://pcp.io
-Requires: pcp = @package_version@
-%description pmda-rpm
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about the installed RPM packages.
-%endif
-# end pcp-pmda-rpm
-
-
-#
-# pcp-pmda-sendmail
-#
-%package pmda-sendmail
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for Sendmail
-URL: https://pcp.io
-Requires: pcp = @package_version@
-%description pmda-sendmail
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about Sendmail traffic.
-# end pcp-pmda-sendmail
-
-#
-# pcp-pmda-shping
-#
-%package pmda-shping
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for shell command responses
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-shping
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about quality of service and response time measurements of
-arbitrary shell commands.
-# end pcp-pmda-shping
-
-#
-# pcp-pmda-smart
-#
-%package pmda-smart
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for S.M.A.R.T values
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-smart
-This package contains the PCP Performance Metric Domain Agent (PMDA) for
-collecting metrics of disk S.M.A.R.T values making use of data from the
-smartmontools package.
-#end pcp-pmda-smart
-
-#
-# pcp-pmda-summary
-#
-%package pmda-summary
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) summary metrics from pmie
-URL: https://pcp.io
-Requires: pcp = @package_version@
-%description pmda-summary
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about other installed pmdas.
-# end pcp-pmda-summary
-
-%if "@pmda_systemd@" == "true"
-#
-# pcp-pmda-systemd
-#
-%package pmda-systemd
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics from the Systemd journal
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-systemd
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics from the Systemd journal.
-# end pcp-pmda-systemd
-%endif
-
-#
-# pcp-pmda-trace
-#
-%package pmda-trace
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics for application tracing
-URL: https://pcp.io
-Requires: pcp-libs = @package_version@
-%description pmda-trace
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about trace performance data in applications.
-# end pcp-pmda-trace
-
-#
-# pcp-pmda-weblog
-#
-%package pmda-weblog
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) metrics from web server logs
-URL: https://pcp.io
-Requires: pcp = @package_version@
-%description pmda-weblog
-This package contains the PCP Performance Metrics Domain Agent (PMDA) for
-collecting metrics about web server logs.
-# end pcp-pmda-weblog
-# end C pmdas
-
-# pcp-collector metapackage
-%package collector
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) Collection meta Package
-URL: https://pcp.io
+# The following are inherited from pcp-collector and pcp-monitor,
+# both of which are now obsoleted by the base pcp package
 Requires: pcp-pmda-bonding pcp-pmda-dbping pcp-pmda-ds389 pcp-pmda-ds389log
-Requires: pcp-pmda-gpfs pcp-pmda-gpsd pcp-pmda-kvm pcp-pmda-lustre
+Requires: pcp-pmda-gpfs pcp-pmda-gpsd pcp-pmda-lustre pcp-pmda-pdns
 Requires: pcp-pmda-memcache pcp-pmda-named pcp-pmda-netfilter pcp-pmda-news
-Requires: pcp-pmda-nfsclient pcp-pmda-pdns
 Requires: pcp-pmda-samba pcp-pmda-slurm pcp-pmda-vmware pcp-pmda-zimbra
 Requires: pcp-pmda-apache pcp-pmda-bash pcp-pmda-cisco pcp-pmda-dm pcp-pmda-gfs2
-Requires: pcp-pmda-lmsensors pcp-pmda-logger pcp-pmda-mailq pcp-pmda-mounts
+Requires: pcp-pmda-logger pcp-pmda-mailq pcp-pmda-mounts
 Requires: pcp-pmda-nvidia-gpu pcp-pmda-roomtemp pcp-pmda-sendmail pcp-pmda-shping
 Requires: pcp-pmda-lustrecomm pcp-pmda-redis pcp-pmda-docker pcp-pmda-smart
 %if "@have_python@" == "true"
-Requires: pcp-pmda-gluster pcp-pmda-zswap pcp-pmda-unbound pcp-pmda-mic pcp-pmda-haproxy
+Requires: pcp-pmda-gluster pcp-pmda-zswap pcp-pmda-unbound pcp-pmda-mic
+Requires: pcp-pmda-haproxy pcp-pmda-nfsclient pcp-pmda-lmsensors
+%endif
+%if "@pmda_podman@" == "true"
+Requires: pcp-pmda-podman
 %endif
 %if "@pmda_bcc@" == "true"
 Requires: pcp-pmda-bcc
@@ -2025,20 +317,6 @@ Requires: pcp-pmda-elasticsearch
 %if "@pmda_postfix@" == "true"
 Requires: pcp-pmda-postfix
 %endif
-Requires: pcp-pmda-summary pcp-pmda-trace pcp-pmda-weblog
-%description collector
-This meta-package installs the PCP metric collection dependencies.  This
-includes the vast majority of packages used to collect PCP metrics.  The
-pcp-collector package also automatically enables and starts the pmcd and
-pmlogger services.
-# collector
-
-# pcp-monitor metapackage
-%package monitor
-License: GPLv2+
-Group: Applications/System
-Summary: Performance Co-Pilot (PCP) Monitoring meta Package
-URL: https://pcp.io
 %if "@enable_webapi@" == "true"
 Requires: pcp-webapi
 %endif
@@ -2048,18 +326,1651 @@ Requires: pcp-system-tools
 %if "@enable_qt@" == "true"
 Requires: pcp-gui
 %endif
-%description monitor
-This meta-package contains the PCP performance monitoring dependencies.  This
-includes a large number of packages for analysing PCP metrics in various ways.
-# monitor
+Requires: gcc bc bzip2 gzip
+
+%description testsuite
+Quality assurance test suite for Performance Co-Pilot (PCP).
+# end testsuite
+
+%if "@enable_manager@" == "true"
+#
+# pcp-manager
+#
+%package manager
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) manager daemon
+URL: https://pcp.io
+Requires: pcp = @package_version@ pcp-libs = @package_version@
+
+%description manager
+An optional daemon (pmmgr) that manages a collection of pmlogger and
+pmie daemons, for a set of discovered local and remote hosts running
+the performance metrics collection daemon (pmcd).  It ensures these
+daemons are running when appropriate, and manages their log rotation
+needs.  It is an alternative to the cron-based pmlogger/pmie service
+scripts.
+%endif
+
+%if "@enable_webapi@" == "true"
+#
+# pcp-webapi
+#
+%package webapi
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) web API service
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%if !%{disable_boost}
+BuildRequires: boost-devel
+%endif
+
+%description webapi
+Provides a daemon (pmwebd) that binds a large subset of the Performance
+Co-Pilot (PCP) client API (PMAPI) to RESTful web applications using the
+HTTP (PMWEBAPI) protocol.
+%endif
+
+%if "@have_webapps@" == "true"
+#
+# pcp-webjs
+#
+%package webjs
+License: ASL 2.0 and MIT and CC-BY
+%if @rpm_version@ >= 4060000
+BuildArch: noarch
+%endif
+Requires: pcp-webapp-vector pcp-webapp-blinkenlights
+Requires: pcp-webapp-grafana pcp-webapp-graphite
+Summary: Performance Co-Pilot (PCP) web applications
+URL: https://pcp.io
+
+%description webjs
+Javascript web application content for the Performance Co-Pilot (PCP)
+web service.
+
+%package webapp-vector
+License: ASL 2.0
+%if 0%{?rhel} == 0 || 0%{?rhel} > 5
+BuildArch: noarch
+%endif
+Summary: Vector web application for Performance Co-Pilot (PCP)
+URL: https://github.com/Netflix/vector
+
+%description webapp-vector
+Vector web application for the Performance Co-Pilot (PCP).
+
+%package webapp-grafana
+License: ASL 2.0
+Conflicts: pcp-webjs < 3.10.4
+%if 0%{?rhel} == 0 || 0%{?rhel} > 5
+BuildArch: noarch
+%endif
+Summary: Grafana web application for Performance Co-Pilot (PCP)
+URL: https://grafana.org
+
+%description webapp-grafana
+Grafana is an open source, feature rich metrics dashboard and graph
+editor.  This package provides a Grafana that uses the Performance
+Co-Pilot (PCP) as the data repository.  Other Grafana backends are
+not used.
+
+Grafana can render time series dashboards at the browser via flot.js
+(more interactive, slower, for beefy browsers) or alternately at the
+server via png (less interactive, faster).
+
+%package webapp-graphite
+License: ASL 2.0
+Conflicts: pcp-webjs < 3.10.4
+%if 0%{?rhel} == 0 || 0%{?rhel} > 5
+BuildArch: noarch
+%endif
+Summary: Graphite web application for Performance Co-Pilot (PCP)
+URL: http://graphite.readthedocs.org
+
+%description webapp-graphite
+Graphite is a highly scalable real-time graphing system. This package
+provides a graphite version that uses the Performance Co-Pilot (PCP)
+as the data repository, and Graphites web interface renders it. The
+Carbon and Whisper subsystems of Graphite are not included nor used.
+
+%package webapp-blinkenlights
+License: ASL 2.0
+Conflicts: pcp-webjs < 3.11.9
+%if 0%{?rhel} == 0 || 0%{?rhel} > 5
+BuildArch: noarch
+%endif
+Summary: Blinking lights web application for Performance Co-Pilot (PCP)
+URL: https://pcp.io
+
+%description webapp-blinkenlights
+Demo web application showing traffic lights that change colour based
+on the periodic evaluation of performance metric expressions.
+%endif
+
+#
+# perl-PCP-PMDA. This is the PCP agent perl binding.
+#
+%package -n perl-PCP-PMDA
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) Perl bindings and documentation
+URL: https://pcp.io
+BuildRequires: perl(ExtUtils::MakeMaker)
+Requires: pcp-libs = @package_version@
+Requires: %{perl_interpreter}
+
+%description -n perl-PCP-PMDA
+The PCP::PMDA Perl module contains the language bindings for
+building Performance Metric Domain Agents (PMDAs) using Perl.
+Each PMDA exports performance data for one specific domain, for
+example the operating system kernel, Cisco routers, a database,
+an application, etc.
+
+#
+# perl-PCP-MMV
+#
+%package -n perl-PCP-MMV
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) Perl bindings for PCP Memory Mapped Values
+URL: https://pcp.io
+Requires: pcp = @package_version@
+Requires: %{perl_interpreter}
+
+%description -n perl-PCP-MMV
+The PCP::MMV module contains the Perl language bindings for
+building scripts instrumented with the Performance Co-Pilot
+(PCP) Memory Mapped Value (MMV) mechanism.
+This mechanism allows arbitrary values to be exported from an
+instrumented script into the PCP infrastructure for monitoring
+and analysis with pmchart, pmie, pmlogger and other PCP tools.
+
+#
+# perl-PCP-LogImport
+#
+%package -n perl-PCP-LogImport
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) Perl bindings for importing external data into PCP archives
+URL: https://pcp.io
+Requires: pcp = @package_version@
+Requires: %{perl_interpreter}
+
+%description -n perl-PCP-LogImport
+The PCP::LogImport module contains the Perl language bindings for
+importing data in various 3rd party formats into PCP archives so
+they can be replayed with standard PCP monitoring tools.
+
+#
+# perl-PCP-LogSummary
+#
+%package -n perl-PCP-LogSummary
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) Perl bindings for post-processing output of pmlogsummary
+URL: https://pcp.io
+Requires: pcp = @package_version@
+Requires: %{perl_interpreter}
+
+%description -n perl-PCP-LogSummary
+The PCP::LogSummary module provides a Perl module for using the
+statistical summary data produced by the Performance Co-Pilot
+pmlogsummary utility.  This utility produces various averages,
+minima, maxima, and other calculations based on the performance
+data stored in a PCP archive.  The Perl interface is ideal for
+exporting this data into third-party tools (e.g. spreadsheets).
+
+#
+# pcp-import-sar2pcp
+#
+%package import-sar2pcp
+License: LGPLv2+
+Summary: Performance Co-Pilot tools for importing sar data into PCP archive logs
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
+Maybe-Requires: perl(XML::TokeParser)
+
+
+%description import-sar2pcp
+Performance Co-Pilot (PCP) front-end tools for importing sar data
+into standard PCP archive logs for replay with any PCP monitoring tool.
+
+#
+# pcp-import-iostat2pcp
+#
+%package import-iostat2pcp
+License: LGPLv2+
+Summary: Performance Co-Pilot tools for importing iostat data into PCP archive logs
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
+
+%description import-iostat2pcp
+Performance Co-Pilot (PCP) front-end tools for importing iostat data
+into standard PCP archive logs for replay with any PCP monitoring tool.
+
+#
+# pcp-import-sheet2pcp
+#
+%package import-sheet2pcp
+License: LGPLv2+
+Summary: Performance Co-Pilot tools for importing spreadsheet data into PCP archive logs
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
+Maybe-Requires: perl(XML::TokeParser)
+
+%description import-sheet2pcp
+Performance Co-Pilot (PCP) front-end tools for importing spreadsheet data
+into standard PCP archive logs for replay with any PCP monitoring tool.
+
+#
+# pcp-import-mrtg2pcp
+#
+%package import-mrtg2pcp
+License: LGPLv2+
+Summary: Performance Co-Pilot tools for importing MTRG data into PCP archive logs
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
+
+%description import-mrtg2pcp
+Performance Co-Pilot (PCP) front-end tools for importing MTRG data
+into standard PCP archive logs for replay with any PCP monitoring tool.
+
+#
+# pcp-import-ganglia2pcp
+#
+%package import-ganglia2pcp
+License: LGPLv2+
+Summary: Performance Co-Pilot tools for importing ganglia data into PCP archive logs
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@ perl-PCP-LogImport = @package_version@
+
+%description import-ganglia2pcp
+Performance Co-Pilot (PCP) front-end tools for importing ganglia data
+into standard PCP archive logs for replay with any PCP monitoring tool.
+
+#
+# pcp-import-collectl2pcp
+#
+%package import-collectl2pcp
+License: LGPLv2+
+Summary: Performance Co-Pilot tools for importing collectl log files into PCP archive logs
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+
+%description import-collectl2pcp
+Performance Co-Pilot (PCP) front-end tools for importing collectl data
+into standard PCP archive logs for replay with any PCP monitoring tool.
+
+#
+# pcp-export-zabbix-agent
+#
+%package export-zabbix-agent
+License: GPLv2+
+Summary: Module for exporting PCP metrics to Zabbix agent
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+
+%description export-zabbix-agent
+Performance Co-Pilot (PCP) module for exporting metrics from PCP to
+Zabbix via the Zabbix agent - see zbxpcp(3) for further details.
+
+%if "@pcp2elasticsearch@" == "true"
+#
+# pcp-export-pcp2elasticsearch
+#
+%package export-pcp2elasticsearch
+License: GPLv2+
+Summary: Performance Co-Pilot tools for exporting PCP metrics to ElasticSearch
+URL: https://pcp.io
+Requires: pcp-libs >= %{version}-%{release}
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+Requires: python3-requests
+%else
+Requires: %{__python2}-pcp = @package_version@
+Requires: %{__python2}-requests
+%endif
+
+%description export-pcp2elasticsearch
+Performance Co-Pilot (PCP) front-end tools for exporting metric values
+to Elasticsearch - a distributed, RESTful search and analytics engine.
+See https://www.elastic.co/community for further details.
+%endif
+
+%if "@have_python@" == "true"
+#
+# pcp-export-pcp2graphite
+#
+%package export-pcp2graphite
+License: GPLv2+
+Summary: Performance Co-Pilot tools for exporting PCP metrics to Graphite
+URL: https://pcp.io
+Requires: pcp-libs >= %{version}-%{release}
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+%else
+Requires: %{__python2}-pcp = @package_version@
+%endif
+
+%description export-pcp2graphite
+Performance Co-Pilot (PCP) front-end tools for exporting metric values
+to graphite (http://graphite.readthedocs.org).
+
+%if "@pcp2influxdb@" == "true"
+#
+# pcp-export-pcp2influxdb
+#
+%package export-pcp2influxdb
+License: GPLv2+
+Summary: Performance Co-Pilot tools for exporting PCP metrics to InfluxDB
+URL: https://pcp.io
+Requires: pcp-libs >= %{version}-%{release}
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+Requires: python3-requests
+%else
+Requires: %{__python2}-pcp = @package_version@
+Requires: %{__python2}-requests
+%endif
+
+%description export-pcp2influxdb
+Performance Co-Pilot (PCP) front-end tools for exporting metric values
+to InfluxDB (https://influxdata.com/time-series-platform/influxdb).
+%endif
+
+#
+# pcp-export-pcp2json
+#
+%package export-pcp2json
+License: GPLv2+
+Summary: Performance Co-Pilot tools for exporting PCP metrics in JSON format
+URL: https://pcp.io
+Requires: pcp-libs >= @package_version@
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+%else
+Requires: %{__python2}-pcp = @package_version@
+%endif
+
+%description export-pcp2json
+Performance Co-Pilot (PCP) front-end tools for exporting metric values
+in JSON format.
+
+#
+# pcp-export-pcp2spark
+#
+%package export-pcp2spark
+License: GPLv2+
+Summary: Performance Co-Pilot tools for exporting PCP metrics to Apache Spark
+URL: https://pcp.io
+Requires: pcp-libs >= @package_version@
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+%else
+Requires: %{__python2}-pcp = @package_version@
+%endif
+
+%description export-pcp2spark
+Performance Co-Pilot (PCP) front-end tools for exporting metric values
+in JSON format to Apache Spark. See https://spark.apache.org/ for
+further details on Apache Spark.
+
+#
+# pcp-export-pcp2xml
+#
+%package export-pcp2xml
+License: GPLv2+
+Summary: Performance Co-Pilot tools for exporting PCP metrics in XML format
+URL: https://pcp.io
+Requires: pcp-libs >= %{version}-%{release}
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+%else
+Requires: %{__python2}-pcp = @package_version@
+%endif
+
+%description export-pcp2xml
+Performance Co-Pilot (PCP) front-end tools for exporting metric values
+in XML format.
+
+#
+# pcp-export-pcp2zabbix
+#
+%package export-pcp2zabbix
+License: GPLv2+
+Summary: Performance Co-Pilot tools for exporting PCP metrics to Zabbix
+URL: https://pcp.io
+Requires: pcp-libs >= %{version}-%{release}
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+%else
+Requires: %{__python2}-pcp = @package_version@
+%endif
+
+%description export-pcp2zabbix
+Performance Co-Pilot (PCP) front-end tools for exporting metric values
+to the Zabbix (https://www.zabbix.org/) monitoring software.
+%endif
+
+%if "@pcp2xlsx@" == "true"
+#
+# pcp-export-pcp2xlsx
+#
+%package export-pcp2xlsx
+License: GPLv2+
+Summary: Performance Co-Pilot tools for exporting PCP metrics to Excel
+URL: https://pcp.io
+Requires: pcp-libs >= %{version}-%{release}
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+Requires: python3-openpyxl
+%else
+Requires: %{__python2}-pcp = @package_version@
+Requires: %{__python2}-openpyxl
+%endif
+
+%description export-pcp2xlsx
+Performance Co-Pilot (PCP) front-end tools for exporting metric values
+in Excel spreadsheet format.
+%endif
+
+%if "@enable_python2@" == "true"
+#
+# python2-pcp. This is the PCP library bindings for python.
+#
+%package -n %{__python2}-pcp
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) Python bindings and documentation
+URL: https://pcp.io
+BuildRequires: %{__python2}-devel
+%if 0%{?fedora} >= 26 || 0%{?rhel} > 7
+# on these platforms, python2-pcp replaces python-pcp
+Obsoletes: python-pcp
+%endif
+%if "%{_vendor}" == "redhat" && 0%{?rhel} <= 5 && 0%{?fedora} <= 25
+Requires: %{__python2}-ctypes
+%endif
+Requires: pcp-libs = @package_version@
+Requires: %{__python2}
+
+%description -n %{__python2}-pcp
+This python PCP module contains the language bindings for
+Performance Metric API (PMAPI) monitor tools and Performance
+Metric Domain Agents (PMDA) collector tools written in Python.
+%endif
+
+%if "@enable_python3@" == "true"
+#
+# python3-pcp. This is the PCP library bindings for python.
+#
+%package -n python3-pcp
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) Python3 bindings and documentation
+URL: https://pcp.io
+%if 0%{?centos_ver} == 7
+BuildRequires: python36-devel
+Requires: python36
+%else
+BuildRequires: python3-devel
+Requires: python3
+%endif
+Requires: pcp-libs = @package_version@
+
+%description -n python3-pcp
+This python PCP module contains the language bindings for
+Performance Metric API (PMAPI) monitor tools and Performance
+Metric Domain Agent (PMDA) collector tools written in Python3.
+%endif
+
+%if "@have_python@" == "true"
+#
+# pcp-system-tools
+#
+%package system-tools
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) System and Monitoring Tools
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+%else
+Requires: %{__python2}-pcp = @package_version@
+%endif
+Requires: pcp-libs = @package_version@
+%if "@enable_dstat@" == "true"
+# https://fedoraproject.org/wiki/Packaging:Guidelines "Renaming/Replacing Existing Packages"
+Provides: dstat = @package_version@
+Provides: /usr/bin/dstat
+Obsoletes: dstat <= 0.8
+%endif
+
+%description system-tools
+This PCP module contains additional system monitoring tools written
+in the Python language.
+%endif #pcp-system-tools
+
+%if "@enable_qt@" == "true"
+#
+# pcp-gui package for Qt tools
+#
+%package gui
+License: GPLv2+ and LGPLv2+ and LGPLv2+ with exceptions
+Summary: Visualization tools for the Performance Co-Pilot toolkit
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+
+%description gui
+Visualization tools for the Performance Co-Pilot toolkit.
+The pcp-gui package primarily includes visualization tools for
+monitoring systems using live and archived Performance Co-Pilot
+(PCP) sources.
+%endif
+
+#
+# pcp-doc package
+#
+%package doc
+License: GPLv2+ and CC-BY
+# BuildArch: requires rpm 4.6 or later ... ./get_rpm_vesion maps version
+# 4.6.2.3 to the 7-digit "number" 4060203
+%if @rpm_version@ >= 4060000
+BuildArch: noarch
+%endif
+Summary: Documentation and tutorial for the Performance Co-Pilot
+URL: https://pcp.io
+
+%description doc
+Documentation and tutorial for the Performance Co-Pilot
+Performance Co-Pilot (PCP) provides a framework and services to support
+system-level performance monitoring and performance management.
+
+The pcp-doc package provides useful information on using and
+configuring the Performance Co-Pilot (PCP) toolkit for system
+level performance management.  It includes tutorials, HOWTOs,
+and other detailed documentation about the internals of core
+PCP utilities and daemons, and the PCP graphical tools.
+
+#
+# pcp-selinux package
+#
+%if "@enable_selinux@" == "true"
+%package selinux
+License: GPLv2+ and CC-BY
+Summary: Selinux policy package
+URL: https://pcp.io
+BuildRequires: selinux-policy-devel
+BuildRequires: selinux-policy-targeted
+%if 0%{?fedora} >= 19 || 0%{?rhel} >= 6 || 0%{?suse_version} >= 1200
+BuildRequires: setools-console
+%else
+BuildRequires: setools
+%endif
+Requires: policycoreutils
+%if "%{_vendor}" == "suse"
+# no libsemanage for SuSE other than libsemanage1 for OpenSuSE 12
+%if 0%{?suse_version} >= 1200
+Requires: libsemanage1
+%endif
+%else
+Requires: libsemanage
+%endif
+
+%description selinux
+This package contains SELinux support for PCP.  The package contains
+interface rules, type enforcement and file context adjustments for an
+updated policy package.
+%endif
+
+%if "@pmda_infiniband@" == "true"
+#
+# pcp-pmda-infiniband
+#
+%package pmda-infiniband
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Infiniband HCAs and switches
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%if "%{_vendor}" == "suse"
+%if 0%{suse_version} >= 1110
+Requires: libibmad5 >= 1.1.7 libibumad3 >= 1.1.7
+%else
+Requires: libibmad1 >= 1.1.7 libibumad1 >= 1.1.7
+%endif
+%else
+Requires: libibmad >= 1.1.7 libibumad >= 1.1.7
+%endif
+BuildRequires: libibmad-devel >= 1.1.7 libibumad-devel >= 1.1.7
+
+%description pmda-infiniband
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting Infiniband statistics.  By default, it monitors the local HCAs
+but can also be configured to monitor remote GUIDs such as IB switches.
+#end pcp-pmda-infiniband
+%endif
+
+%if "@pmda_podman@" == "true"
+#
+# pcp-pmda-podman
+#
+%package pmda-podman
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for podman containers
+URL: https://pcp.io
+Requires: libvarlink
+BuildRequires: libvarlink-devel
+
+%description pmda-podman
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting podman container and pod statistics through libvarlink.
+#end pcp-pmda-podman
+%endif
+
+%if "@pmda_perfevent@" == "true"
+#
+# pcp-pmda-perfevent
+#
+%package pmda-perfevent
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for hardware counters
+URL: https://pcp.io
+%if "%{_vendor}" == "suse"
+Requires: libpfm4 >= 4.4
+%else
+Requires: libpfm >= 4.4
+%endif
+BuildRequires: libpfm-devel >= 4.4
+Obsoletes: pcp-pmda-papi pcp-pmda-papi-debuginfo
+
+%description pmda-perfevent
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting hardware counters statistics through libpfm.
+#end pcp-pmda-perfevent
+%endif
+
+%if "@pmda_activemq@" == "true"
+#
+# pcp-pmda-activemq
+#
+%package pmda-activemq
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for ActiveMQ
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+Maybe-Requires: perl(LWP::UserAgent)
+
+%description pmda-activemq
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the ActiveMQ message broker.
+#end pcp-pmda-activemq
+%endif
+
+%if "@pmda_bind2@" == "true"
+#
+# pcp-pmda-bind2
+#
+%package pmda-bind2
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for BIND servers
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+Maybe-Requires: perl(LWP::UserAgent)
+Maybe-Requires: perl(XML::LibXML)
+Maybe-Requires: perl(File::Slurp)
+
+%description pmda-bind2
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics from BIND (Berkeley Internet Name Domain).
+#end pcp-pmda-bind2
+%endif
+
+#
+# pcp-pmda-redis
+#
+%package pmda-redis
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Redis
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-redis
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics from Redis servers (redis.io).
+#end pcp-pmda-redis
+
+%if "@pmda_nutcracker@" == "true"
+#
+# pcp-pmda-nutcracker
+#
+%package pmda-nutcracker
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for NutCracker (TwemCache)
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+Maybe-Requires: perl(YAML::XS::LibYAML)
+Maybe-Requires: perl(JSON)
+
+%description pmda-nutcracker
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics from NutCracker (TwemCache).
+#end pcp-pmda-nutcracker
+%endif
+
+#
+# pcp-pmda-bonding
+#
+%package pmda-bonding
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Bonded network interfaces
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-bonding
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about bonded network interfaces.
+#end pcp-pmda-bonding
+
+#
+# pcp-pmda-dbping
+#
+%package pmda-dbping
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Database response times and Availablility
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-dbping
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Database response times and Availablility.
+#end pcp-pmda-dbping
+
+#
+# pcp-pmda-ds389
+#
+%package pmda-ds389
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for 389 Directory Servers
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+%if "%{_vendor}" == "suse"
+Requires: perl-ldap
+%else
+%if 0%{?rhel} <= 7
+Requires: perl-LDAP
+%endif
+%endif
+
+%description pmda-ds389
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about a 389 Directory Server.
+#end pcp-pmda-ds389
+
+#
+# pcp-pmda-ds389log
+#
+%package pmda-ds389log
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for 389 Directory Server Loggers
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+Requires: perl-Date-Manip
+
+%description pmda-ds389log
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics from a 389 Directory Server log.
+#end pcp-pmda-ds389log
+
+
+#
+# pcp-pmda-gpfs
+#
+%package pmda-gpfs
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for GPFS Filesystem
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-gpfs
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the GPFS filesystem.
+#end pcp-pmda-gpfs
+
+#
+# pcp-pmda-gpsd
+#
+%package pmda-gpsd
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for a GPS Daemon
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-gpsd
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about a GPS Daemon.
+#end pcp-pmda-gpsd
+
+#
+# pcp-pmda-docker
+#
+%package pmda-docker
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics from the Docker daemon
+URL: https://pcp.io
+
+%description pmda-docker
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics using the Docker daemon REST API.
+#end pcp-pmda-docker
+
+#
+# pcp-pmda-lustre
+#
+%package pmda-lustre
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Lustre Filesytem
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-lustre
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Lustre Filesystem.
+#end pcp-pmda-lustre
+
+#
+# pcp-pmda-lustrecomm
+#
+%package pmda-lustrecomm
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Lustre Filesytem Comms
+URL: https://pcp.io
+
+%description pmda-lustrecomm
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Lustre Filesystem Comms.
+#end pcp-pmda-lustrecomm
+
+#
+# pcp-pmda-memcache
+#
+%package pmda-memcache
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Memcached
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-memcache
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Memcached.
+#end pcp-pmda-memcache
+
+%if "@pmda_mysql@" == "true"
+#
+# pcp-pmda-mysql
+#
+%package pmda-mysql
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for MySQL
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+Maybe-Requires: perl(DBI)
+Maybe-Requires: perl(DBD::mysql)
+
+%description pmda-mysql
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the MySQL database.
+#end pcp-pmda-mysql
+%endif
+
+#
+# pcp-pmda-named
+#
+%package pmda-named
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Named
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-named
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Named nameserver.
+#end pcp-pmda-named
+
+# pcp-pmda-netfilter
+#
+%package pmda-netfilter
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Netfilter framework
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-netfilter
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Netfilter packet filtering framework.
+#end pcp-pmda-netfilter
+
+#
+# pcp-pmda-news
+#
+%package pmda-news
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Usenet News
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-news
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Usenet News.
+#end pcp-pmda-news
+
+%if "@pmda_nginx@" == "true"
+#
+# pcp-pmda-nginx
+#
+%package pmda-nginx
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Nginx Webserver
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+Maybe-Requires: perl(LWP::UserAgent)
+
+%description pmda-nginx
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Nginx Webserver.
+#end pcp-pmda-nginx
+%endif
+
+%if "@pmda_oracle@" == "true"
+#
+# pcp-pmda-oracle
+#
+%package pmda-oracle
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Oracle database
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+Maybe-Requires: perl(DBI)
+
+%description pmda-oracle
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Oracle database.
+#end pcp-pmda-oracle
+%endif
+
+#
+# pcp-pmda-pdns
+#
+%package pmda-pdns
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for PowerDNS
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-pdns
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the PowerDNS.
+#end pcp-pmda-pdns
+
+%if "@pmda_postfix@" == "true"
+#
+# pcp-pmda-postfix
+#
+%package pmda-postfix
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Postfix (MTA)
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+%if 0%{?fedora} > 16 || 0%{?rhel} > 5
+Requires: postfix-perl-scripts
+%endif
+%if 0%{?rhel} <= 5
+Requires: postfix
+%endif
+Maybe-Requires: postfix-doc
+
+%description pmda-postfix
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Postfix (MTA).
+#end pcp-pmda-postfix
+%endif
+
+#
+# pcp-pmda-rsyslog
+#
+%package pmda-rsyslog
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Rsyslog
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-rsyslog
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Rsyslog.
+#end pcp-pmda-rsyslog
+
+#
+# pcp-pmda-samba
+#
+%package pmda-samba
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Samba
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-samba
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Samba.
+#end pcp-pmda-samba
+
+#
+# pcp-pmda-slurm
+#
+%package pmda-slurm
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the SLURM Workload Manager
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-slurm
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics from the SLURM Workload Manager.
+#end pcp-pmda-slurm
+
+%if "@pmda_snmp@" == "true"
+#
+# pcp-pmda-snmp
+#
+%package pmda-snmp
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Simple Network Management Protocol
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+Maybe-Requires: perl(Net::SNMP)
+
+%description pmda-snmp
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about SNMP.
+#end pcp-pmda-snmp
+%endif
+
+#
+# pcp-pmda-vmware
+#
+%package pmda-vmware
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for VMware
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-vmware
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics for VMware.
+#end pcp-pmda-vmware
+
+#
+# pcp-pmda-zimbra
+#
+%package pmda-zimbra
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Zimbra
+URL: https://pcp.io
+Requires: perl-PCP-PMDA = @package_version@
+
+%description pmda-zimbra
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Zimbra.
+#end pcp-pmda-zimbra
+
+#
+# pcp-pmda-dm
+#
+%package pmda-dm
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Device Mapper Cache and Thin Client
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-dm
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Device Mapper Cache and Thin Client.
+# end pcp-pmda-dm
+
+%if "@pmda_bcc@" == "true"
+#
+# pcp-pmda-bcc
+#
+%package pmda-bcc
+License: ASL 2.0 and GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics from eBPF/BCC modules
+URL: https://pcp.io
+Requires: python3-bcc
+Requires: python3-pcp
+%description pmda-bcc
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+extracting performance metrics from eBPF/BCC Python modules.
+# end pcp-pmda-bcc
+%endif
+
+%if "@have_python@" == "true"
+#
+# pcp-pmda-gluster
+#
+%package pmda-gluster
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Gluster filesystem
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%else
+Requires: %{__python2}-pcp
+%endif
+%description pmda-gluster
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the gluster filesystem.
+# end pcp-pmda-gluster
+
+#
+# pcp-pmda-nfsclient
+#
+%package pmda-nfsclient
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for NFS Clients
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%else
+Requires: %{__python2}-pcp
+%endif
+%description pmda-nfsclient
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics for NFS Clients.
+#end pcp-pmda-nfsclient
+
+%if "@pmda_postgresql@" == "true"
+#
+# pcp-pmda-postgresql
+#
+%package pmda-postgresql
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for PostgreSQL
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+Requires: python3-psycopg2
+%else
+Requires: %{__python2}-psycopg2
+Requires: %{__python2}-pcp
+%endif
+%description pmda-postgresql
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the PostgreSQL database.
+#end pcp-pmda-postgresql
+%endif
+
+#
+# pcp-pmda-zswap
+#
+%package pmda-zswap
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for compressed swap
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%else
+Requires: %{__python2}-pcp
+%endif
+%description pmda-zswap
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about compressed swap.
+# end pcp-pmda-zswap
+
+#
+# pcp-pmda-unbound
+#
+%package pmda-unbound
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Unbound DNS Resolver
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%else
+Requires: %{__python2}-pcp
+%endif
+%description pmda-unbound
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Unbound DNS Resolver.
+# end pcp-pmda-unbound
+
+#
+# pcp-pmda-mic
+#
+%package pmda-mic
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Intel MIC cards
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%else
+Requires: %{__python2}-pcp
+%endif
+%description pmda-mic
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Intel MIC cards.
+# end pcp-pmda-mic
+
+#
+# pcp-pmda-haproxy
+#
+%package pmda-haproxy
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for HAProxy
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%else
+Requires: %{__python2}-pcp
+%endif
+%description pmda-haproxy
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+extracting performance metrics from HAProxy over the HAProxy stats socket.
+# end pcp-pmda-haproxy
+
+#
+# pcp-pmda-lmsensors
+#
+%package pmda-lmsensors
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for hardware sensors
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%else
+Requires: %{__python2}-pcp
+%endif
+# rewritten in python, so there is no longer a debuginfo package
+Obsoletes: pcp-pmda-lmsensors-debuginfo
+%description pmda-lmsensors
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Linux hardware monitoring sensors.
+# end pcp-pmda-lmsensors
+
+%endif # @have_python@
+
+%if "@pmda_libvirt@" == "true"
+#
+# pcp-pmda-libvirt
+#
+%package pmda-libvirt
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics from virtual machines
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%if "%{_vendor}" == "suse"
+Requires: libvirt-python %{__python2}-lxml
+%else
+Requires: libvirt-python3 python3-lxml
+%endif
+%else
+Requires: %{__python2}-pcp
+Requires: %{__python2}-lxml
+# it appears the rpm name changed from libvirt-python to python-libvirt in
+# Fedora 27
+%if 0%{?fedora} >= 27
+Requires: %{__python2}-libvirt
+%else
+Requires: libvirt-python
+%endif
+%endif
+
+%description pmda-libvirt
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+extracting virtualisation statistics from libvirt about behaviour of guest
+and hypervisor machines.
+#end pcp-pmda-libvirt
+%endif
+
+%if "@pmda_lio@" == "true"
+#
+# pcp-pmda-lio
+#
+%package pmda-lio
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the LIO subsystem
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+Requires: python3-rtslib
+%else
+Requires: %{__python2}-rtslib
+Requires: %{__python2}-pcp
+%endif
+%description pmda-lio
+This package provides a PMDA to gather performance metrics from the kernels
+iSCSI target interface (LIO). The metrics are stored by LIO within the Linux
+kernels configfs filesystem. The PMDA provides per LUN level stats, and a
+summary instance per iSCSI target, which aggregates all LUN metrics within the
+target.
+#end pcp-pmda-lio
+%endif
+
+%if "@pmda_elasticsearch@" == "true"
+#
+# pcp-pmda-elasticsearch
+#
+%package pmda-elasticsearch
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Elasticsearch
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%else
+Requires: %{__python2}-pcp
+%endif
+%description pmda-elasticsearch
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Elasticsearch.
+#end pcp-pmda-elasticsearch
+%endif
+
+%if "@pmda_prometheus@" == "true"
+#
+# pcp-pmda-prometheus
+#
+%package pmda-prometheus
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics from Prometheus endpoints
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%if "@enable_python3@" == "true"
+Requires: python3-pcp = @package_version@
+Requires: python3-requests
+%else
+Requires: %{__python2}-pcp = @package_version@
+Requires: %{__python2}-requests
+%endif
+
+%description pmda-prometheus
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+extracting statistics from programs instrumented as Prometheus endpoints.
+#end pcp-pmda-prometheus
+%endif
+
+%if "@pmda_json@" == "true"
+#
+# pcp-pmda-json
+#
+%package pmda-json
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for JSON data
+URL: https://pcp.io
+%if "@enable_python3@" == "true"
+Requires: python3-pcp
+%if "%{_vendor}" == "suse"
+Requires: %{__python2}-jsonpointer
+%else
+Requires: python3-jsonpointer
+%endif
+Requires: python3-six
+%else
+Requires: %{__python2}-pcp
+Requires: %{__python2}-jsonpointer
+Requires: %{__python2}-six
+%endif
+%description pmda-json
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics output in JSON.
+# end pcp-pmda-json
+%endif
+
+#
+# C pmdas
+# pcp-pmda-apache
+#
+%package pmda-apache
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Apache webserver
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-apache
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Apache webserver.
+# end pcp-pmda-apache
+
+#
+# pcp-pmda-bash
+#
+%package pmda-bash
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Bash shell
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-bash
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Bash shell.
+# end pcp-pmda-bash
+
+#
+# pcp-pmda-cifs
+#
+%package pmda-cifs
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the CIFS protocol
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-cifs
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Common Internet Filesytem.
+# end pcp-pmda-cifs
+
+#
+# pcp-pmda-cisco
+#
+%package pmda-cisco
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Cisco routers
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-cisco
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Cisco routers.
+# end pcp-pmda-cisco
+
+#
+# pcp-pmda-gfs2
+#
+%package pmda-gfs2
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the GFS2 filesystem
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-gfs2
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the Global Filesystem v2.
+# end pcp-pmda-gfs2
+
+#
+# pcp-pmda-logger
+#
+%package pmda-logger
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics from arbitrary log files
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-logger
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics from a specified set of log files (or pipes).  The PMDA
+supports both sampled and event-style metrics.
+# end pcp-pmda-logger
+
+#
+# pcp-pmda-mailq
+#
+%package pmda-mailq
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the sendmail queue
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-mailq
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about email queues managed by sendmail.
+# end pcp-pmda-mailq
+
+#
+# pcp-pmda-mounts
+#
+%package pmda-mounts
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for filesystem mounts
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-mounts
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about filesystem mounts.
+# end pcp-pmda-mounts
+
+#
+# pcp-pmda-nvidia-gpu
+#
+%package pmda-nvidia-gpu
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the Nvidia GPU
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-nvidia-gpu
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Nvidia GPUs.
+# end pcp-pmda-nvidia-gpu
+
+#
+# pcp-pmda-roomtemp
+#
+%package pmda-roomtemp
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the room temperature
+URL: https://pcp.io
+Requires: pcp = @package_version@
+%description pmda-roomtemp
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the room temperature.
+# end pcp-pmda-roomtemp
+
+%if "@pmda_rpm@" == "true"
+#
+# pcp-pmda-rpm
+#
+%package pmda-rpm
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for the RPM package manager
+URL: https://pcp.io
+Requires: pcp = @package_version@
+%description pmda-rpm
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about the installed RPM packages.
+%endif
+# end pcp-pmda-rpm
+
+
+#
+# pcp-pmda-sendmail
+#
+%package pmda-sendmail
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for Sendmail
+URL: https://pcp.io
+Requires: pcp = @package_version@
+%description pmda-sendmail
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about Sendmail traffic.
+# end pcp-pmda-sendmail
+
+#
+# pcp-pmda-shping
+#
+%package pmda-shping
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for shell command responses
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-shping
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about quality of service and response time measurements of
+arbitrary shell commands.
+# end pcp-pmda-shping
+
+#
+# pcp-pmda-smart
+#
+%package pmda-smart
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for S.M.A.R.T values
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-smart
+This package contains the PCP Performance Metric Domain Agent (PMDA) for
+collecting metrics of disk S.M.A.R.T values making use of data from the
+smartmontools package.
+#end pcp-pmda-smart
+
+#
+# pcp-pmda-summary
+#
+%package pmda-summary
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) summary metrics from pmie
+URL: https://pcp.io
+Requires: pcp = @package_version@
+%description pmda-summary
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about other installed PMDAs.
+# end pcp-pmda-summary
+
+%if "@pmda_systemd@" == "true"
+#
+# pcp-pmda-systemd
+#
+%package pmda-systemd
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics from the Systemd journal
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-systemd
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics from the Systemd journal.
+# end pcp-pmda-systemd
+%endif
+
+#
+# pcp-pmda-trace
+#
+%package pmda-trace
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics for application tracing
+URL: https://pcp.io
+Requires: pcp-libs = @package_version@
+%description pmda-trace
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about trace performance data in applications.
+# end pcp-pmda-trace
+
+#
+# pcp-pmda-weblog
+#
+%package pmda-weblog
+License: GPLv2+
+Summary: Performance Co-Pilot (PCP) metrics from web server logs
+URL: https://pcp.io
+Requires: pcp = @package_version@
+%description pmda-weblog
+This package contains the PCP Performance Metrics Domain Agent (PMDA) for
+collecting metrics about web server logs.
+# end pcp-pmda-weblog
+# end C pmdas
+
 
 %package zeroconf
 License: GPLv2+
-Group: Applications/System
 Summary: Performance Co-Pilot (PCP) Zeroconf Package
 URL: https://pcp.io
 Requires: pcp pcp-doc pcp-system-tools
 Requires: pcp-pmda-dm pcp-pmda-nfsclient
+%if "@have_python@" == "true"
+Requires: pcp-pmda-nfsclient
+%endif
 # to make pcp-zeroconf replace sysstat, uncomment the next line
 # Obsoletes: sysstat
 %description zeroconf
@@ -2229,30 +2140,32 @@ awk '{print $NF}' $DIST_MANIFEST | egrep 'collectl2pcp' >import_collectl2pcp_fil
 %if "@pcp2elasticsearch@" == "true"
 awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2elasticsearch' >export_pcp2elasticsearch_files
 %endif
+%if "@pcp2influxdb@" == "true"
+awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2influxdb' >export_pcp2influxdb_files
+%endif
 %if "@pcp2xlsx@" == "true"
 awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2xlsx' >export_pcp2xlsx_files
 %endif
 %if "@have_python@" == "true"
 awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2graphite' >export_pcp2graphite_files
-awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2influxdb' >export_pcp2influxdb_files
 awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2json' >export_pcp2json_files
+awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2spark' >export_pcp2spark_files
 awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2xml' >export_pcp2xml_files
 awk '{print $NF}' $DIST_MANIFEST | egrep 'pcp2zabbix' >export_pcp2zabbix_files
 %endif
 awk '{print $NF}' $DIST_MANIFEST | egrep 'zabbix|zbxpcp' | grep -v pcp2zabbix >export_zabbix_agent_files
 %if "@pmda_infiniband@" == "true"
-awk '{print $NF}' $DIST_MANIFEST | egrep 'infiniband|pmdaib|pmdas/ib' >pmda_infiniband_files
+awk '{print $NF}' $DIST_MANIFEST | egrep 'pmdas/infiniband|pmdaib|pmdas/ib' >pmda_infiniband_files
 %endif
-%if "@pmda_papi@" == "true"
-awk '{print $NF}' $DIST_MANIFEST | egrep 'pmdas/papi' >pmda_papi_files
+%if "@pmda_podman@" == "true"
+awk '{print $NF}' $DIST_MANIFEST | egrep 'pmdas/podman' > pmda_podman_files
 %endif
 %if "@pmda_perfevent@" == "true"
-awk '{print $NF}' $DIST_MANIFEST | egrep 'perfevent|perfalloc.1' > pmda_perfevent_files
+awk '{print $NF}' $DIST_MANIFEST | egrep 'pmdas/perfevent|perfalloc.1' > pmda_perfevent_files
 %endif
 %if "@pmda_systemd@" == "true"
 awk '{print $NF}' $DIST_MANIFEST | egrep 'pmdas/systemd' > pmda_systemd_files
 %endif
-
 %if "@pmda_activemq@" == "true"
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/activemq' > pmda_activemq_files
 %endif
@@ -2272,7 +2185,6 @@ awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/elasticsearch' > pmda_elastic
 %endif
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/gpfs' > pmda_gpfs_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/gpsd' > pmda_gpsd_files
-awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/kvm' > pmda_kvm_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/docker' > pmda_docker_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/lustrecomm' > pmda_lustrecomm_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/lustre' > pmda_lustre_files
@@ -2283,7 +2195,6 @@ awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/mysql' > pmda_mysql_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/named' > pmda_named_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/netfilter' > pmda_netfilter_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/news' > pmda_news_files
-awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/nfsclient' > pmda_nfsclient_files
 %if "@pmda_nginx@" == "true"
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/nginx' > pmda_nginx_files
 %endif
@@ -2327,6 +2238,8 @@ awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/zswap' > pmda_zswap_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/unbound' > pmda_unbound_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/mic' > pmda_mic_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/haproxy' > pmda_haproxy_files
+awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/nfsclient' > pmda_nfsclient_files
+awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/lmsensors' > pmda_lmsensors_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmcollectl|pmiostat|pmrep|dstat' \
       -e 'pcp-atop|pcp-collectl|pcp-dmcache|pcp-dstat|pcp-free|pcp-ipcs' \
       -e 'pcp-iostat|pcp-lvmcache|pcp-mpstat|pcp-numastat|pcp-pidstat' \
@@ -2338,7 +2251,6 @@ awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/bash' > pmda_bash_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/cifs' > pmda_cifs_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/cisco' > pmda_cisco_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/gfs2' > pmda_gfs2_files
-awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/lmsensors' > pmda_lmsensors_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/logger' > pmda_logger_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/mailq' > pmda_mailq_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/mounts' > pmda_mounts_files
@@ -2355,17 +2267,16 @@ awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/trace' > pmda_trace_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'pmdas/weblog' > pmda_weblog_files
 awk '{print $NF}' $DIST_MANIFEST | egrep -e 'zeroconf|daily[-_]report|/sa$' > zeroconf_files
 
-touch gui_files webapi_files manager_files pmda_infiniband_files pmda_papi_files \
-      pmda_perfevent_files pmda_bonding_files pmda_dbping_files \
+touch gui_files webapi_files manager_files pmda_infiniband_files \
+      pmda_perfevent_files pmda_podman_files \
+      pmda_bonding_files pmda_dbping_files pmda_pdns_files \
       pmda_ds389_files pmda_ds389log_files pmda_gpfs_files \
-      pmda_gpsd_files pmda_kvm_files pmda_lustre_files pmda_lustrecomm_files \
+      pmda_gpsd_files pmda_lustre_files pmda_lustrecomm_files \
       pmda_memcache_files pmda_named_files pmda_redis_files pmda_docker_files \
-      pmda_netfilter_files pmda_news_files pmda_nfsclient_files \
-      pmda_pdns_files \
+      pmda_netfilter_files pmda_news_files pmda_logger_files \
       pmda_rsyslog_files pmda_samba_files pmda_slurm_files \
       pmda_vmware_files pmda_zimbra_files pmda_apache_files pmda_bash_files \
       pmda_cifs_files pmda_cisco_files pmda_gfs2_files \
-      pmda_lmsensors_files pmda_logger_files \
       pmda_mailq_files pmda_mounts_files pmda_nvidia_files pmda_roomtemp_files \
       pmda_rpm_files pmda_sendmail_files pmda_shping_files pmda_summary_files \
       pmda_trace_files pmda_weblog_files pmda_dm_files pmda_systemd_files \
@@ -2373,7 +2284,8 @@ touch gui_files webapi_files manager_files pmda_infiniband_files pmda_papi_files
 
 %if "@have_python@" == "true"
 touch pmda_gluster_files pmda_zswap_files pmda_unbound_files \
-      pmda_mic_files pmda_haproxy_files system_tools_files
+      pmda_mic_files pmda_haproxy_files system_tools_files \
+      pmda_lmsensors_files pmda_nfsclient_files 
 %endif
 %if "@pmda_bcc@" == "true"
 touch pmda_bcc_files
@@ -2434,7 +2346,7 @@ BEGIN {
     while( getline < "manager_files") manager[$0]=1;
     while( getline < "testsuite_files") testsuite[$0]=1;
     while( getline < "pmda_infiniband_files") pmda_infiniband[$0]=1;
-    while( getline < "pmda_papi_files") pmda_papi[$0]=1;
+    while( getline < "pmda_podman_files") pmda_podman[$0]=1;
     while( getline < "pmda_perfevent_files") pmda_perfevent[$0]=1;
 %if "@pmda_activemq@" == "true"
     while( getline < "pmda_activemq_files") pmda_activemq[$0]=1;
@@ -2455,7 +2367,6 @@ BEGIN {
 %endif
     while( getline < "pmda_gpfs_files") pmda_gpfs[$0]=1;
     while( getline < "pmda_gpsd_files") pmda_gpsd[$0]=1;
-    while( getline < "pmda_kvm_files") pmda_kvm[$0]=1;
     while( getline < "pmda_docker_files") pmda_docker[$0]=1;
     while( getline < "pmda_lustrecomm_files") pmda_lustrecomm[$0]=1;
     while( getline < "pmda_lustre_files") pmda_lustre[$0]=1;
@@ -2466,7 +2377,6 @@ BEGIN {
     while( getline < "pmda_named_files") pmda_named[$0]=1;
     while( getline < "pmda_netfilter_files") pmda_netfilter[$0]=1;
     while( getline < "pmda_news_files") pmda_news[$0]=1;
-    while( getline < "pmda_nfsclient_files") pmda_nfsclient[$0]=1;
 %if "@pmda_nginx@" == "true"
     while( getline < "pmda_nginx_files") pmda_nginx[$0]=1;
 %endif
@@ -2499,14 +2409,19 @@ BEGIN {
     while( getline < "pmda_unbound_files") pmda_unbound[$0]=1;
     while( getline < "pmda_mic_files") pmda_mic[$0]=1;
     while( getline < "pmda_haproxy_files") pmda_haproxy[$0]=1;
+    while( getline < "pmda_lmsensors_files") pmda_lmsensors[$0]=1;
+    while( getline < "pmda_nfsclient_files") pmda_nfsclient[$0]=1;
     while( getline < "export_pcp2graphite_files") export_pcp2graphite[$0]=1;
-    while( getline < "export_pcp2influxdb_files") export_pcp2influxdb[$0]=1;
     while( getline < "export_pcp2json_files") export_pcp2json[$0]=1;
+    while( getline < "export_pcp2spark_files") export_pcp2spark[$0]=1;
     while( getline < "export_pcp2xml_files") export_pcp2xml[$0]=1;
     while( getline < "export_pcp2zabbix_files") export_pcp2zabbix[$0]=1;
 %endif
 %if "@pcp2elasticsearch@" == "true"
     while( getline < "export_pcp2elasticsearch_files") export_pcp2elasticsearch[$0]=1;
+%endif
+%if "@pcp2influxdb@" == "true"
+    while( getline < "export_pcp2influxdb_files") export_pcp2influxdb[$0]=1;
 %endif
 %if "@pcp2xlsx@" == "true"
     while( getline < "export_pcp2xlsx_files") export_pcp2xlsx[$0]=1;
@@ -2529,7 +2444,6 @@ BEGIN {
     while( getline < "pmda_cifs_files") pmda_cifs[$0]=1;
     while( getline < "pmda_cisco_files") pmda_cisco[$0]=1;
     while( getline < "pmda_gfs2_files") pmda_gfs2[$0]=1;
-    while( getline < "pmda_lmsensors_files") pmda_lmsensors[$0]=1;
     while( getline < "pmda_logger_files") pmda_logger[$0]=1;
     while( getline < "pmda_mailq_files") pmda_mailq[$0]=1;
     while( getline < "pmda_mounts_files") pmda_mounts[$0]=1;
@@ -2569,7 +2483,7 @@ BEGIN {
     else if (manager[$NF]) f="manager_files.rpm";
     else if (testsuite[$NF]) f="testsuite_files.rpm";
     else if (pmda_infiniband[$NF]) f="pmda_infiniband_files.rpm";
-    else if (pmda_papi[$NF]) f="pmda_papi_files.rpm";
+    else if (pmda_podman[$NF]) f="pmda_podman_files.rpm";
     else if (pmda_perfevent[$NF]) f="pmda_perfevent_files.rpm";
 %if "@pmda_activemq@" == "true"
     else if (pmda_activemq[$NF]) f="pmda_activemq_files.rpm";
@@ -2590,7 +2504,6 @@ BEGIN {
 %endif
     else if (pmda_gpfs[$NF]) f="pmda_gpfs_files.rpm";
     else if (pmda_gpsd[$NF]) f="pmda_gpsd_files.rpm";
-    else if (pmda_kvm[$NF]) f="pmda_kvm_files.rpm";
     else if (pmda_docker[$NF]) f="pmda_docker_files.rpm";
     else if (pmda_lustrecomm[$NF]) f="pmda_lustrecomm_files.rpm";
     else if (pmda_lustre[$NF]) f="pmda_lustre_files.rpm";
@@ -2601,7 +2514,6 @@ BEGIN {
     else if (pmda_named[$NF]) f="pmda_named_files.rpm";
     else if (pmda_netfilter[$NF]) f="pmda_netfilter_files.rpm";
     else if (pmda_news[$NF]) f="pmda_news_files.rpm";
-    else if (pmda_nfsclient[$NF]) f="pmda_nfsclient_files.rpm";
 %if "@pmda_nginx@" == "true"
     else if (pmda_nginx[$NF]) f="pmda_nginx_files.rpm";
 %endif
@@ -2634,14 +2546,19 @@ BEGIN {
     else if (pmda_unbound[$NF]) f="pmda_unbound_files.rpm";
     else if (pmda_mic[$NF]) f="pmda_mic_files.rpm";
     else if (pmda_haproxy[$NF]) f="pmda_haproxy_files.rpm";
+    else if (pmda_lmsensors[$NF]) f="pmda_lmsensors_files.rpm";
+    else if (pmda_nfsclient[$NF]) f="pmda_nfsclient_files.rpm";
     else if (export_pcp2graphite[$NF]) f="export_pcp2graphite_files.rpm";
-    else if (export_pcp2influxdb[$NF]) f="export_pcp2influxdb_files.rpm";
     else if (export_pcp2json[$NF]) f="export_pcp2json_files.rpm";
+    else if (export_pcp2spark[$NF]) f="export_pcp2spark_files.rpm";
     else if (export_pcp2xml[$NF]) f="export_pcp2xml_files.rpm";
     else if (export_pcp2zabbix[$NF]) f="export_pcp2zabbix_files.rpm";
 %endif
 %if "@pcp2elasticsearch@" == "true"
     else if (export_pcp2elasticsearch[$NF]) f="export_pcp2elasticsearch_files.rpm";
+%endif
+%if "@pcp2influxdb@" == "true"
+    else if (export_pcp2influxdb[$NF]) f="export_pcp2influxdb_files.rpm";
 %endif
 %if "@pcp2xlsx@" == "true"
     else if (export_pcp2xlsx[$NF]) f="export_pcp2xlsx_files.rpm";
@@ -2664,7 +2581,6 @@ BEGIN {
     else if (pmda_cifs[$NF]) f="pmda_cifs_files.rpm";
     else if (pmda_cisco[$NF]) f="pmda_cisco_files.rpm";
     else if (pmda_gfs2[$NF]) f="pmda_gfs2_files.rpm";
-    else if (pmda_lmsensors[$NF]) f="pmda_lmsensors_files.rpm";
     else if (pmda_logger[$NF]) f="pmda_logger_files.rpm";
     else if (pmda_mailq[$NF]) f="pmda_mailq_files.rpm";
     else if (pmda_mounts[$NF]) f="pmda_mounts_files.rpm";
@@ -2696,6 +2612,7 @@ $1 == "d" {
 $1 == "f" && $6 ~ "etc/pcp.conf" { printf ("%%%%config ") >> f; }
 $1 == "f" && $6 ~ "etc/pcp.env"  { printf ("%%%%config ") >> f; }
 $1 == "f" && $6 ~ "etc/pcp.sh"   { printf ("%%%%config ") >> f; }
+$1 == "f" && $6 ~ "pmdapostgresql.conf"   { printf ("%%%%config(noreplace) ") >> f; }
 $1 == "f" {
 	    for (i=0; i < nconf; i++) {
 		if ($6 ~ conf[i]) {
@@ -2724,6 +2641,18 @@ exit 0
 
 %post testsuite
 chown -R pcpqa:pcpqa @pcp_var_dir@/testsuite 2>/dev/null
+# inherited from %post for pcp-collector
+%if "@enable_systemd@" == "true"
+    systemctl restart pmcd >/dev/null 2>&1
+    systemctl restart pmlogger >/dev/null 2>&1
+    systemctl enable pmcd >/dev/null 2>&1
+    systemctl enable pmlogger >/dev/null 2>&1
+%else
+    /sbin/chkconfig --add pmcd >/dev/null 2>&1
+    /sbin/chkconfig --add pmlogger >/dev/null 2>&1
+    /sbin/service pmcd condrestart
+    /sbin/service pmlogger condrestart
+%endif
 
 %pre
 getent group pcp >/dev/null || groupadd -r pcp
@@ -2734,16 +2663,6 @@ PCP_CONFIG_DIR=@pcp_var_dir@/config
 PCP_SYSCONF_DIR=@pcp_sysconf_dir@
 PCP_LOG_DIR=@pcp_log_dir@
 PCP_ETC_DIR=@pcp_etc_dir@
-
-# transition pmdadmcache over to pmdadm (device mapper)
-PCP_PMCDCONF_PATH=@pcp_pmcdconf_path@
-PCP_PMDAS_DIR=@pcp_pmdas_dir@
-if grep -q ^dmcache "$PCP_PMCDCONF_PATH" 2>/dev/null
-then
-    mkdir -p -m 755 "$PCP_PMDAS_DIR/dm"
-    touch "$PCP_PMDAS_DIR/dm/.NeedInstall"
-    touch "$PCP_PMDAS_DIR/dmcache/.NeedRemove"
-fi
 
 # rename crontab files to align with current Fedora packaging guidelines
 for crontab in pmlogger pmie
@@ -2839,25 +2758,16 @@ chown -R pcp:pcp "$PCP_LOG_DIR/pmmgr" 2>/dev/null
 %endif
 %endif
 
-%post collector
-%if "@enable_systemd@" == "true"
-    systemctl restart pmcd >/dev/null 2>&1
-    systemctl restart pmlogger >/dev/null 2>&1
-    systemctl enable pmcd >/dev/null 2>&1
-    systemctl enable pmlogger >/dev/null 2>&1
-%else
-    /sbin/chkconfig --add pmcd >/dev/null 2>&1
-    /sbin/chkconfig --add pmlogger >/dev/null 2>&1
-    /sbin/service pmcd condrestart
-    /sbin/service pmlogger condrestart
-%endif
-
 %post zeroconf
 PCP_PMDAS_DIR=@pcp_pmdas_dir@
 PCP_SYSCONFIG_DIR=@pcp_sysconfig_dir@
-# auto-install important PMDAs for RH Support
+PCP_PMCDCONF_PATH=@pcp_pmcdconf_path@
+# auto-install important PMDAs for RH Support (if not present already)
 for PMDA in dm nfsclient ; do
-    touch "$PCP_PMDAS_DIR/$PMDA/.NeedInstall"
+    if ! grep -q "$PMDA/pmda$PMDA" "$PCP_PMCDCONF_PATH"
+    then
+	touch "$PCP_PMDAS_DIR/$PMDA/.NeedInstall"
+    fi
 done
 # increase default pmlogger recording frequency
 sed -i 's/^\#\ PMLOGGER_INTERVAL.*/PMLOGGER_INTERVAL=10/g' "$PCP_SYSCONFIG_DIR/pmlogger"
@@ -2870,6 +2780,8 @@ pmieconf -c enable dmthin
     systemctl restart pmie >/dev/null 2>&1
     systemctl enable pmcd >/dev/null 2>&1
     systemctl enable pmlogger >/dev/null 2>&1
+    systemctl enable pmlogger_daily_report >/dev/null 2>&1
+    systemctl enable pmlogger_daily_report-poll >/dev/null 2>&1
     systemctl enable pmie >/dev/null 2>&1
 %else
     /sbin/chkconfig --add pmcd >/dev/null 2>&1
@@ -2896,11 +2808,6 @@ pmieconf -c enable dmthin
 %{pmda_remove "$1" "rpm"}
 %endif #preun pmda-rpm
 
-%if "@pmda_papi@" == "true"
-%preun pmda-papi
-%{pmda_remove "$1" "papi"}
-%endif #preun pmda-papi
-
 %if "@pmda_systemd@" == "true"
 %preun pmda-systemd
 %{pmda_remove "$1" "systemd"}
@@ -2915,6 +2822,11 @@ pmieconf -c enable dmthin
 %preun pmda-perfevent
 %{pmda_remove "$1" "perfevent"}
 %endif #preun pmda-perfevent
+
+%if "@pmda_podman@" == "true"
+%preun pmda-podman
+%{pmda_remove "$1" "podman"}
+%endif #preun pmda-podman
 
 %if "@pmda_json@" == "true"
 %preun pmda-json
@@ -3007,9 +2919,6 @@ pmieconf -c enable dmthin
 %preun pmda-gpsd
 %{pmda_remove "$1" "gpsd"}
 
-%preun pmda-kvm
-%{pmda_remove "$1" "kvm"}
-
 %preun pmda-docker
 %{pmda_remove "$1" "docker"}
 
@@ -3030,9 +2939,6 @@ pmieconf -c enable dmthin
 
 %preun pmda-news
 %{pmda_remove "$1" "news"}
-
-%preun pmda-nfsclient
-%{pmda_remove "$1" "nfsclient"}
 
 %preun pmda-pdns
 %{pmda_remove "$1" "pdns"}
@@ -3072,6 +2978,12 @@ pmieconf -c enable dmthin
 
 %preun pmda-haproxy
 %{pmda_remove "$1" "haproxy"}
+
+%preun pmda-nfsclient
+%{pmda_remove "$1" "nfsclient"}
+
+%preun pmda-lmsensors
+%{pmda_remove "$1" "lmsensors"}
 %endif #@have_python@
 
 %preun pmda-apache
@@ -3088,9 +3000,6 @@ pmieconf -c enable dmthin
 
 %preun pmda-gfs2
 %{pmda_remove "$1" "gfs2"}
-
-%preun pmda-lmsensors
-%{pmda_remove "$1" "lmsensors"}
 
 %preun pmda-logger
 %{pmda_remove "$1" "logger"}
@@ -3124,6 +3033,17 @@ pmieconf -c enable dmthin
 
 %preun pmda-weblog
 %{pmda_remove "$1" "weblog"}
+
+%if "@enable_systemd@" == "true"
+%preun zeroconf
+if [ "$1" -eq 0 ]
+then
+    %systemd_preun pmlogger_daily_report.timer
+    %systemd_preun pmlogger_daily_report.service
+    %systemd_preun pmlogger_daily_report-poll.timer
+    %systemd_preun pmlogger_daily_report-poll.service
+fi
+%endif
 
 %preun
 if [ "$1" -eq 0 ]
@@ -3209,16 +3129,6 @@ cd
 %{selinux_handle_policy "$1" "pcpupstream-container"}
 %endif
 
-%if "@pmda_bcc@" == "true"
-%post pmda-bcc
-%{pmda_notready "$1" "bcc"}
-%endif
-
-%if "@pmda_prometheus@" == "true"
-%post pmda-prometheus
-%{pmda_notready "$1" "prometheus"}
-%endif
-
 %files -f base_files.rpm
 
 %files conf -f cfg_files.rpm
@@ -3280,12 +3190,12 @@ cd
 %files testsuite -f testsuite_files.rpm
 %defattr(-,pcpqa,pcpqa)
 
-%if "@pmda_papi@" == "true"
-%files pmda-papi -f pmda_papi_files.rpm
-%endif
-
 %if "@pmda_infiniband@" == "true"
 %files pmda-infiniband -f pmda_infiniband_files.rpm
+%endif
+
+%if "@pmda_podman@" == "true"
+%files pmda-podman -f pmda_podman_files.rpm
 %endif
 
 %if "@pmda_perfevent@" == "true"
@@ -3322,8 +3232,6 @@ cd
 
 %files pmda-gpsd -f pmda_gpsd_files.rpm
 
-%files pmda-kvm -f pmda_kvm_files.rpm
-
 %files pmda-docker -f pmda_docker_files.rpm
 
 %files pmda-lustre -f pmda_lustre_files.rpm
@@ -3345,8 +3253,6 @@ cd
 %if "@pmda_nginx@" == "true"
 %files pmda-nginx -f pmda_nginx_files.rpm
 %endif
-
-%files pmda-nfsclient -f pmda_nfsclient_files.rpm
 
 %files pmda-pdns -f pmda_pdns_files.rpm
 
@@ -3393,19 +3299,28 @@ cd
 
 %files pmda-haproxy -f pmda_haproxy_files.rpm
 
+%files pmda-lmsensors -f pmda_lmsensors_files.rpm
+
+%files pmda-nfsclient -f pmda_nfsclient_files.rpm
+
 %files export-pcp2graphite -f export_pcp2graphite_files.rpm
 
-%files export-pcp2influxdb -f export_pcp2influxdb_files.rpm
-
 %files export-pcp2json -f export_pcp2json_files.rpm
+
+%files export-pcp2spark -f export_pcp2spark_files.rpm
 
 %files export-pcp2xml -f export_pcp2xml_files.rpm
 
 %files export-pcp2zabbix -f export_pcp2zabbix_files.rpm
+
 %endif
 
 %if "@pcp2elasticsearch@" == "true"
 %files export-pcp2elasticsearch -f export_pcp2elasticsearch_files.rpm
+%endif
+
+%if "@pcp2influxdb@" == "true"
+%files export-pcp2influxdb -f export_pcp2influxdb_files.rpm
 %endif
 
 %if "@pcp2xlsx@" == "true"
@@ -3439,8 +3354,6 @@ cd
 %files pmda-cisco -f pmda_cisco_files.rpm
 
 %files pmda-gfs2 -f pmda_gfs2_files.rpm
-
-%files pmda-lmsensors -f pmda_lmsensors_files.rpm
 
 %files pmda-logger -f pmda_logger_files.rpm
 
@@ -3503,9 +3416,5 @@ cd
 %if "@have_python@" == "true"
 %files system-tools -f system_tools_files.rpm
 %endif
-
-%files collector
-
-%files monitor
 
 %files zeroconf -f zeroconf.rpm

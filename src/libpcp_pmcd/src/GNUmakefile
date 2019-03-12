@@ -54,7 +54,7 @@ probes.h: probes.d pmcd.stp
 probes.o: probes.d
 	$(DTRACE) -G -s $< -o $@
 endif
-ifneq "$(findstring $(TARGET_OS),solaris freebsd)" ""
+ifneq "$(findstring $(TARGET_OS),solaris freebsd netbsd)" ""
 $(STATICLIBTARGET): rewrite
 trace.o: probes.h
 probes.h: probes.d
@@ -88,3 +88,6 @@ default_pcp : default
 install_pcp : install
 
 client.o:	$(TOPDIR)/src/include/pcp/libpcp.h
+
+check::	$(CFILES)
+	$(CLINT) $^

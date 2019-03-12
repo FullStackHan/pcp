@@ -9,6 +9,7 @@ Info: tcplife
 Info: Modules configured.
 Info: Initializing modules:
 Info: tcplife
+Info: tcplife: Filtering on remote ports: [80].
 Info: tcplife: Using BPF source file X
 Info: tcplife: Initialized.
 Info: Modules initialized.
@@ -18,7 +19,6 @@ Info: Metrics registered.
 Info: Registering helpers:
 Info: tcplife
 Info: Helpers registered.
-Info: Ready to process requests.
 Info: Initializing, currently in 'notready' state.
 Info: Enabled modules:
 Info: ['tcplife']
@@ -27,6 +27,7 @@ Info: tcplife
 Info: Modules configured.
 Info: Initializing modules:
 Info: tcplife
+Info: tcplife: Filtering on remote ports: [80].
 Info: tcplife: Using BPF source file X
 Info: tcplife: Initialized.
 Info: Modules initialized.
@@ -36,7 +37,6 @@ Info: Metrics registered.
 Info: Registering helpers:
 Info: tcplife
 Info: Helpers registered.
-Info: Ready to process requests.
 Updating the Performance Metrics Name Space (PMNS) ...
 Terminate PMDA if already installed ...
 [...install files, make output...]

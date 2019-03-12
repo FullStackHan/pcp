@@ -1,7 +1,5 @@
 #
-# pcp-dstat(1) configuration file - see pcp-dstat.conf(5)
-#
-# metric[,label[,instances[,unit/scale[,type[,width[,precision[,limit]]]]]]]
+# pcp-dstat(1) configuration file - see pcp-dstat(5)
 #
 
 [load]

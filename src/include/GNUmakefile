@@ -17,15 +17,12 @@ include $(TOPDIR)/src/include/builddefs
 -include ./GNUlocaldefs
 
 CONFFILES = builddefs pcp.conf
-LSRCFILES = builddefs.in buildrules pcp.conf.in pcp.env pcp.mingw
-
-LDIRT = builddefs.install
 
 SUBDIRS = pcp
 
 default :: default_pcp
 
-default_pcp : $(SUBDIRS) pcp.conf builddefs.install
+default_pcp : $(SUBDIRS) pcp.conf pcp.conf.install builddefs.install
 	$(SUBDIRS_MAKERULE)
 
 include $(BUILDRULES)
@@ -33,19 +30,14 @@ include $(BUILDRULES)
 install :: default_pcp install_pcp
 
 install_pcp : $(SUBDIRS) default_pcp
-ifeq "$(TARGET_OS)" "mingw"
-	$(INSTALL) -m 644 pcp.conf $(PCP_ETC_DIR)/pcp.conf
-	$(INSTALL) -m 644 pcp.mingw $(PCP_ETC_DIR)/pcp.env
-else
 ifeq "$(TARGET_OS)" "netbsd"
 	# $(PCP_ETC_DIR) is likely to be /usr/pkg/etc ... need
 	# a more visible place for these two
 	$(INSTALL) -m 644 pcp.conf /etc/pcp.conf
 	$(INSTALL) -m 644 pcp.env /etc/pcp.env
 else
-	$(INSTALL) -m 644 pcp.conf $(PCP_ETC_DIR)/pcp.conf
+	$(INSTALL) -m 644 pcp.conf.install $(PCP_ETC_DIR)/pcp.conf
 	$(INSTALL) -m 644 pcp.env $(PCP_ETC_DIR)/pcp.env
-endif
 endif
 	$(INSTALL) -m 644 buildrules $(PCP_INC_DIR)/buildrules
 	$(INSTALL) -m 644 builddefs.install $(PCP_INC_DIR)/builddefs
@@ -56,4 +48,15 @@ builddefs.install : builddefs
 	    -e 's;^BUILDRULES.*=.*buildrules;BUILDRULES = $$\(PCP_INC_DIR\)/buildrules;' \
 	    -e 's;^INSTALL_SH.*=.*install-sh;INSTALL_SH = $$\(PCP_BINADM_DIR\)/install-sh;' \
 	    -e 's;^GENPMDA.*=.*genpmda;GENPMDA = $$\(PCP_BIN_DIR\)/genpmda;' \
+	    -e 's;-I\$$(TOPDIR)/src/include/pcp;-I$$(PCP_INC_DIR);' \
+	    -e 's;-I\$$(TOPDIR)/src/include;-I$$(PCP_INC_DIR)/..;' \
+	    -e '/^PCPLIB_LDFLAGS/s;-L.*;-L$$(PCP_LIB_DIR);' \
+	    -e '/^[ 	][ 	]*-L\$$(TOPDIR)/d' \
 	        < builddefs > builddefs.install
+
+pcp.conf.install : pcp.conf
+ifeq ($(TARGET_OS),darwin)
+	sed -e 's;Cellar/pcp/[^/]*/;opt/pcp/;' <pcp.conf >pcp.conf.install
+else
+	cp pcp.conf pcp.conf.install
+endif

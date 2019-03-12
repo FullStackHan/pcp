@@ -30,7 +30,7 @@ CFILES	= pmda.c perfmanager.c perfinterface.c architecture.c \
 HFILES  = architecture.h configparser.h perfinterface.h perfmanager.h \
 		  rapl-interface.h perflock.h parse_events.h
 
-SCRIPTS		= Install Remove perfevent-makerewrite.pl
+SCRIPTS		= Install Remove Upgrade perfevent-makerewrite.pl
 
 DFILES	= README help
 
@@ -71,3 +71,6 @@ perfalloc: perfalloc.o perflock.o
 
 clean clobber::
 	$(RM) configparser.yy.c perfalloc perfalloc.o
+
+check:: $(CFILES) $(HFILES)
+	$(CLINT) $^
